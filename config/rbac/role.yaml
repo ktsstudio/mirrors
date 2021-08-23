@@ -1,0 +1,43 @@
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mirrors.kts.studio
+  resources:
+  - secretmirrors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mirrors.kts.studio
+  resources:
+  - secretmirrors/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - mirrors.kts.studio
+  resources:
+  - secretmirrors/status
+  verbs:
+  - get
+  - patch
+  - update
