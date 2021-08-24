@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -56,7 +57,9 @@ var _ webhook.Validator = &SecretMirror{}
 func (r *SecretMirror) ValidateCreate() error {
 	secretmirrorlog.Info("validate create", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object creation.
+	if r.Spec.Source.Namespace == "" || r.Spec.Source.Name == "" {
+		return errors.New("source namespace and name are required")
+	}
 	return nil
 }
 
@@ -64,7 +67,9 @@ func (r *SecretMirror) ValidateCreate() error {
 func (r *SecretMirror) ValidateUpdate(old runtime.Object) error {
 	secretmirrorlog.Info("validate update", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object update.
+	if r.Spec.Source.Namespace == "" || r.Spec.Source.Name == "" {
+		return errors.New("source namespace and name are required")
+	}
 	return nil
 }
 
