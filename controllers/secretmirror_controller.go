@@ -120,6 +120,17 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Namespace: secretMirror.Spec.Source.Namespace,
 		Name:      secretMirror.Spec.Source.Name,
 	}
+	ownSecretName := makeOwnSecretName(&secretMirror)
+
+	if ownSecretName.Namespace == sourceSecretName.Namespace && ownSecretName.Name == sourceSecretName.Name {
+		// if SecretMirror deployed into the source
+		secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusActive
+		secretMirror.Status.LastSyncTime = metav1.Now()
+		if err := r.Status().Update(ctx, &secretMirror); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	var sourceSecret v1.Secret
 	if err := r.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
 		logger.Error(err, "unable to find source secret, retrying in 1 minute")
@@ -133,7 +144,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	var ownSecret v1.Secret
 	ownSecretFound := true
-	if err := r.Get(ctx, makeOwnSecretName(&secretMirror), &ownSecret); err != nil {
+	if err := r.Get(ctx, ownSecretName, &ownSecret); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("own secret not found - will create one")
 			ownSecretFound = false
