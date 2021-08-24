@@ -110,6 +110,15 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
+	if secretMirror.Status.MirrorStatus == "" {
+		secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
+		secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
+		if err := r.Status().Update(ctx, &secretMirror); err != nil {
+			logger.Error(err, "unable to update SecretMirror status")
+			return ctrl.Result{}, err
+		}
+	}
+
 	sourceSecretName := types.NamespacedName{
 		Namespace: secretMirror.Spec.Source.Namespace,
 		Name:      secretMirror.Spec.Source.Name,
@@ -154,7 +163,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			_ = r.Status().Update(ctx, &secretMirror)
 
 			return ctrl.Result{
-				RequeueAfter: 5 * time.Minute,
+				RequeueAfter: secretMirror.PollPeriodDuration(),
 			}, nil
 		}
 	} else {
@@ -170,8 +179,16 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if !secretDiffer(&sourceSecret, &ownSecret) {
 		logger.Info("secrets are identical")
+		if secretMirror.Status.MirrorStatus != mirrorsv1alpha1.MirrorStatusActive {
+			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusActive
+			secretMirror.Status.LastSyncTime = metav1.Now()
+			if err := r.Status().Update(ctx, &secretMirror); err != nil {
+				logger.Error(err, "unable to update SecretMirror status")
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{
-			RequeueAfter: 10 * time.Minute,
+			RequeueAfter: secretMirror.PollPeriodDuration(),
 		}, nil
 	}
 
@@ -212,7 +229,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{
-		RequeueAfter: 10 * time.Minute,
+		RequeueAfter: secretMirror.PollPeriodDuration(),
 	}, nil
 }
 

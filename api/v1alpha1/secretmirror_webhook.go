@@ -43,9 +43,8 @@ var _ webhook.Defaulter = &SecretMirror{}
 func (r *SecretMirror) Default() {
 	secretmirrorlog.Info("default", "name", r.Name)
 
-	if r.Status.MirrorStatus == "" {
-		secretmirrorlog.Info("setting default mirror status", "name", r.Name)
-		r.Status.MirrorStatus = MirrorStatusPending
+	if r.Spec.PollPeriodSeconds == 0 {
+		r.Spec.PollPeriodSeconds = 10 * 60 // 10 minutes
 	}
 }
 

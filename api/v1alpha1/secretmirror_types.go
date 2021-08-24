@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"time"
 )
 
 type SecretMirrorSource struct {
@@ -41,7 +42,8 @@ type SecretMirrorSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +kubebuilder:validation:Required
-	Source SecretMirrorSource `json:"source,omitempty"`
+	Source            SecretMirrorSource `json:"source,omitempty"`
+	PollPeriodSeconds int64              `json:"pollPeriodSeconds,omitempty"`
 }
 
 // SecretMirrorStatus defines the observed state of SecretMirror
@@ -60,6 +62,7 @@ type SecretMirrorStatus struct {
 // SecretMirror is the Schema for the secretmirrors API
 // +kubebuilder:printcolumn:name="Source Namespace",type=string,JSONPath=`.spec.source.namespace`
 // +kubebuilder:printcolumn:name="Source Name",type=string,JSONPath=`.spec.source.name`
+// +kubebuilder:printcolumn:name="Poll Period",type=integer,JSONPath=`.spec.pollPeriodSeconds`
 // +kubebuilder:printcolumn:name="Mirror Status",type=string,JSONPath=`.status.mirrorStatus`
 // +kubebuilder:printcolumn:name="Last Sync Time",type=string,JSONPath=`.status.lastSyncTime`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -69,6 +72,10 @@ type SecretMirror struct {
 
 	Spec   SecretMirrorSpec   `json:"spec,omitempty"`
 	Status SecretMirrorStatus `json:"status,omitempty"`
+}
+
+func (r *SecretMirror) PollPeriodDuration() time.Duration {
+	return time.Duration(r.Spec.PollPeriodSeconds) * time.Second
 }
 
 //+kubebuilder:object:root=true
