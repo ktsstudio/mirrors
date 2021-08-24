@@ -111,10 +111,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if secretMirror.Status.MirrorStatus == "" {
-		secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
-		secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
-		if err := r.Status().Update(ctx, &secretMirror); err != nil {
-			logger.Error(err, "unable to update SecretMirror status")
+		if err := r.setStatePending(ctx, &secretMirror); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -126,9 +123,9 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var sourceSecret v1.Secret
 	if err := r.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
 		logger.Error(err, "unable to find source secret, retrying in 1 minute")
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
+		if err := r.setStatePending(ctx, &secretMirror); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{
 			RequeueAfter: 1 * time.Minute,
 		}, client.IgnoreNotFound(err)
@@ -231,6 +228,19 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{
 		RequeueAfter: secretMirror.PollPeriodDuration(),
 	}, nil
+}
+
+func (r *SecretMirrorReconciler) setStatePending(ctx context.Context, secretMirror *mirrorsv1alpha1.SecretMirror) error {
+	if secretMirror.Status.MirrorStatus == mirrorsv1alpha1.MirrorStatusPending {
+		return nil
+	}
+
+	secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
+	secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
+	if err := r.Status().Update(ctx, secretMirror); err != nil {
+		return err
+	}
+	return nil
 }
 
 func makeOwnSecretName(secretMirror *mirrorsv1alpha1.SecretMirror) types.NamespacedName {
