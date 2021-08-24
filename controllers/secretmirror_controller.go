@@ -111,7 +111,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if secretMirror.Status.MirrorStatus == "" {
-		if err := r.setStatePending(ctx, &secretMirror); err != nil {
+		if err := r.setStatePending(ctx, &secretMirror, true); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -123,7 +123,7 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var sourceSecret v1.Secret
 	if err := r.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
 		logger.Error(err, "unable to find source secret, retrying in 1 minute")
-		if err := r.setStatePending(ctx, &secretMirror); err != nil {
+		if err := r.setStatePending(ctx, &secretMirror, false); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{
@@ -230,13 +230,15 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}, nil
 }
 
-func (r *SecretMirrorReconciler) setStatePending(ctx context.Context, secretMirror *mirrorsv1alpha1.SecretMirror) error {
+func (r *SecretMirrorReconciler) setStatePending(ctx context.Context, secretMirror *mirrorsv1alpha1.SecretMirror, zeroDate bool) error {
 	if secretMirror.Status.MirrorStatus == mirrorsv1alpha1.MirrorStatusPending {
 		return nil
 	}
 
 	secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
-	secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
+	if zeroDate || secretMirror.Status.LastSyncTime.IsZero() {
+		secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
+	}
 	if err := r.Status().Update(ctx, secretMirror); err != nil {
 		return err
 	}
