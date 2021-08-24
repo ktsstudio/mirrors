@@ -224,6 +224,16 @@ func makeOwnSecretName(secretMirror *mirrorsv1alpha1.SecretMirror) types.Namespa
 }
 
 func secretDiffer(src, dest *v1.Secret) bool {
+	if len(src.Labels) != len(dest.Labels) {
+		return true
+	}
+
+	for k := range src.Labels {
+		if src.Labels[k] != dest.Labels[k] {
+			return true
+		}
+	}
+
 	if len(src.Data) != len(dest.Data) {
 		return true
 	}
