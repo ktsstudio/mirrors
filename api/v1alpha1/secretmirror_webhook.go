@@ -44,6 +44,7 @@ func (r *SecretMirror) Default() {
 	secretmirrorlog.Info("default", "name", r.Name)
 
 	if r.Status.MirrorStatus == "" {
+		secretmirrorlog.Info("setting default mirror status", "name", r.Name)
 		r.Status.MirrorStatus = MirrorStatusPending
 	}
 }
