@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"regexp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -43,8 +44,17 @@ var _ webhook.Defaulter = &SecretMirror{}
 func (r *SecretMirror) Default() {
 	secretmirrorlog.Info("default", "name", r.Name)
 
+	if r.Spec.Source.Namespace == "" {
+		r.Spec.Source.Namespace = r.Namespace
+	}
+
 	if r.Spec.PollPeriodSeconds == 0 {
-		r.Spec.PollPeriodSeconds = 10 * 60 // 10 minutes
+		r.Spec.PollPeriodSeconds = 3 * 60 // 3 minutes
+	}
+
+	if r.Spec.Destination.Namespace == "" && r.Spec.Destination.NamespaceRegex == "" {
+		// trying to use pull mode
+		r.Spec.Destination.Namespace = r.Namespace
 	}
 }
 
@@ -57,8 +67,17 @@ var _ webhook.Validator = &SecretMirror{}
 func (r *SecretMirror) ValidateCreate() error {
 	secretmirrorlog.Info("validate create", "name", r.Name)
 
-	if r.Spec.Source.Namespace == "" || r.Spec.Source.Name == "" {
-		return errors.New("source namespace and name are required")
+	if r.Spec.Source.Name == "" {
+		return errors.New("source name is required")
+	}
+
+	if r.Spec.Destination.Namespace == "" && r.Spec.Destination.NamespaceRegex == "" {
+		return errors.New("destination is empty")
+	}
+
+	if r.Spec.Destination.NamespaceRegex != "" {
+		_, err := regexp.Compile(r.Spec.Destination.NamespaceRegex)
+		return err
 	}
 	return nil
 }
@@ -67,10 +86,7 @@ func (r *SecretMirror) ValidateCreate() error {
 func (r *SecretMirror) ValidateUpdate(old runtime.Object) error {
 	secretmirrorlog.Info("validate update", "name", r.Name)
 
-	if r.Spec.Source.Namespace == "" || r.Spec.Source.Name == "" {
-		return errors.New("source namespace and name are required")
-	}
-	return nil
+	return r.ValidateCreate()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type

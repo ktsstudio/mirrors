@@ -22,11 +22,15 @@ import (
 )
 
 type SecretMirrorSource struct {
-	// +kubebuilder:validation:Required
 	Namespace string `json:"namespace,omitempty"`
 
 	// +kubebuilder:validation:Required
 	Name string `json:"name,omitempty"`
+}
+
+type SecretMirrorDestination struct {
+	NamespaceRegex string `json:"namespaceRegex,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
 }
 
 type MirrorStatus string
@@ -42,8 +46,9 @@ type SecretMirrorSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +kubebuilder:validation:Required
-	Source            SecretMirrorSource `json:"source,omitempty"`
-	PollPeriodSeconds int64              `json:"pollPeriodSeconds,omitempty"`
+	Source            SecretMirrorSource      `json:"source,omitempty"`
+	Destination       SecretMirrorDestination `json:"destination,omitempty"`
+	PollPeriodSeconds int64                   `json:"pollPeriodSeconds,omitempty"`
 }
 
 // SecretMirrorStatus defines the observed state of SecretMirror
@@ -62,6 +67,8 @@ type SecretMirrorStatus struct {
 // SecretMirror is the Schema for the secretmirrors API
 // +kubebuilder:printcolumn:name="Source Namespace",type=string,JSONPath=`.spec.source.namespace`
 // +kubebuilder:printcolumn:name="Source Name",type=string,JSONPath=`.spec.source.name`
+// +kubebuilder:printcolumn:name="Dest Namespace",type=string,JSONPath=`.spec.destination.namespace`
+// +kubebuilder:printcolumn:name="Dest Namespace Regex",type=string,JSONPath=`.spec.destination.namespaceRegex`
 // +kubebuilder:printcolumn:name="Poll Period",type=integer,JSONPath=`.spec.pollPeriodSeconds`
 // +kubebuilder:printcolumn:name="Mirror Status",type=string,JSONPath=`.status.mirrorStatus`
 // +kubebuilder:printcolumn:name="Last Sync Time",type=string,JSONPath=`.status.lastSyncTime`

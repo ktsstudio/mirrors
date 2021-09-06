@@ -17,32 +17,19 @@ limitations under the License.
 package controllers
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
+	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
+	"github.com/ktsstudio/mirrors/pkg/backend"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"time"
-
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
 )
 
 var (
-	managedByMirrorAnnotation = "mirrors.kts.studio/owned-by"
-	secretOwnerKey            = ".metadata.controller"
-	apiGVStr                  = mirrorsv1alpha1.GroupVersion.String()
-	mirrorsFinalizerName      = "mirrors.kts.studio/finalizer"
-
-	notManagedByMirror = errors.New("resource is not managed by the Mirror")
+	secretOwnerKey = ".metadata.controller"
+	apiGVStr       = mirrorsv1alpha1.GroupVersion.String()
 )
 
 // SecretMirrorReconciler reconciles a SecretMirror object
@@ -55,6 +42,7 @@ type SecretMirrorReconciler struct {
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;watch;create;update;patch;delete;list
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;watch;list
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -66,266 +54,40 @@ type SecretMirrorReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var secretMirror mirrorsv1alpha1.SecretMirror
-	if err := r.Get(ctx, req.NamespacedName, &secretMirror); err != nil {
-		logger.Error(err, "unable to fetch SecretMirror")
+	b, err := backend.MakeSecretMirrorBackend(ctx, r.Client, req.NamespacedName)
+	if err != nil || b == nil {
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
 		// on deleted requests.
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
-	// examine DeletionTimestamp to determine if object is under deletion
-	if secretMirror.ObjectMeta.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then lets add the finalizer and update the object. This is equivalent
-		// registering our finalizer.
-		if !containsString(secretMirror.GetFinalizers(), mirrorsFinalizerName) {
-			controllerutil.AddFinalizer(&secretMirror, mirrorsFinalizerName)
-			if err := r.Update(ctx, &secretMirror); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		// The object is being deleted
-		if containsString(secretMirror.GetFinalizers(), mirrorsFinalizerName) {
-			// our finalizer is present, so lets handle any external dependency
-			if err := r.deleteExternalResources(ctx, &secretMirror); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried
-				return ctrl.Result{}, err
-			}
-			logger.Info("deleted managed objects")
+	if err := b.Init(ctx); err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
 
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(&secretMirror, mirrorsFinalizerName)
-			if err := r.Update(ctx, &secretMirror); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
+	stopReconcile, err := b.SetupOrRunFinalizer(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
-		// Stop reconciliation as the item is being deleted
+	if stopReconcile {
 		return ctrl.Result{}, nil
 	}
 
-	if secretMirror.Status.MirrorStatus == "" {
-		if err := r.setStatePending(ctx, &secretMirror, true); err != nil {
+	if b.MirrorStatus() == "" {
+		if err := b.SetStatusPending(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	sourceSecretName := types.NamespacedName{
-		Namespace: secretMirror.Spec.Source.Namespace,
-		Name:      secretMirror.Spec.Source.Name,
-	}
-	ownSecretName := makeOwnSecretName(&secretMirror)
-
-	if ownSecretName.Namespace == sourceSecretName.Namespace && ownSecretName.Name == sourceSecretName.Name {
-		// if SecretMirror deployed into the source
-		secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusActive
-		secretMirror.Status.LastSyncTime = metav1.Now()
-		if err := r.Status().Update(ctx, &secretMirror); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := b.Sync(ctx); err != nil {
+		return ctrl.Result{Requeue: true}, err
 	}
 
-	var sourceSecret v1.Secret
-	if err := r.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
-		logger.Error(err, "unable to find source secret, retrying in 1 minute")
-		if err := r.setStatePending(ctx, &secretMirror, false); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{
-			RequeueAfter: 1 * time.Minute,
-		}, client.IgnoreNotFound(err)
-	}
-
-	var ownSecret v1.Secret
-	ownSecretFound := true
-	if err := r.Get(ctx, ownSecretName, &ownSecret); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("own secret not found - will create one")
-			ownSecretFound = false
-		} else {
-			logger.Error(err, "error getting own secret")
-
-			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusError
-			_ = r.Status().Update(ctx, &secretMirror)
-
-			return ctrl.Result{}, err
-		}
-	}
-
-	managedByMirrorValue := getManagedByMirrorValue(req.Namespace, req.Name)
-	if ownSecretFound {
-		// check annotations on found secret and make sure that we created it
-		value := ownSecret.Annotations[managedByMirrorAnnotation]
-		if value != managedByMirrorValue {
-			logger.Error(notManagedByMirror,
-				fmt.Sprintf("secret %s/%s is not managed by SecretMirror %s",
-					ownSecret.Namespace, ownSecret.Name, secretMirror.Name))
-
-			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusError
-			_ = r.Status().Update(ctx, &secretMirror)
-
-			return ctrl.Result{
-				RequeueAfter: secretMirror.PollPeriodDuration(),
-			}, nil
-		}
-	} else {
-		ownSecret = v1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        sourceSecretName.Name,
-				Namespace:   req.Namespace,
-				Labels:      make(map[string]string),
-				Annotations: make(map[string]string),
-			},
-			Type: sourceSecret.Type,
-		}
-	}
-	if !secretDiffer(&sourceSecret, &ownSecret) {
-		logger.Info("secrets are identical")
-		if secretMirror.Status.MirrorStatus != mirrorsv1alpha1.MirrorStatusActive {
-			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusActive
-			secretMirror.Status.LastSyncTime = metav1.Now()
-			if err := r.Status().Update(ctx, &secretMirror); err != nil {
-				logger.Error(err, "unable to update SecretMirror status")
-				return ctrl.Result{}, err
-			}
-		}
-		return ctrl.Result{
-			RequeueAfter: secretMirror.PollPeriodDuration(),
-		}, nil
-	}
-
-	copySecret(&sourceSecret, &ownSecret)
-	ownSecret.Annotations[managedByMirrorAnnotation] = managedByMirrorValue
-
-	if ownSecretFound {
-		if err := r.Update(ctx, &ownSecret); err != nil {
-			logger.Error(err, "unable to update own secret for SecretMirror", "secret", ownSecret)
-
-			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusError
-			_ = r.Status().Update(ctx, &secretMirror)
-
-			return ctrl.Result{
-				RequeueAfter: 1 * time.Minute,
-			}, err
-		}
-	} else {
-		if err := r.Create(ctx, &ownSecret); err != nil {
-			logger.Error(err, "unable to create own secret for SecretMirror", "secret", ownSecret)
-
-			secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusError
-			_ = r.Status().Update(ctx, &secretMirror)
-
-			return ctrl.Result{
-				RequeueAfter: 1 * time.Minute,
-			}, err
-		}
-	}
-
-	logger.Info(fmt.Sprintf("successfully mirrored secret %s/%s to %s/%s",
-		sourceSecret.Namespace, sourceSecret.Name, ownSecret.Namespace, ownSecret.Name))
-
-	secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusActive
-	secretMirror.Status.LastSyncTime = metav1.Now()
-	if err := r.Status().Update(ctx, &secretMirror); err != nil {
-		logger.Error(err, "unable to update SecretMirror status")
-		return ctrl.Result{}, err
-	}
 	return ctrl.Result{
-		RequeueAfter: secretMirror.PollPeriodDuration(),
+		RequeueAfter: b.PollPeriodDuration(),
 	}, nil
-}
-
-func (r *SecretMirrorReconciler) setStatePending(ctx context.Context, secretMirror *mirrorsv1alpha1.SecretMirror, zeroDate bool) error {
-	if secretMirror.Status.MirrorStatus == mirrorsv1alpha1.MirrorStatusPending {
-		return nil
-	}
-
-	secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
-	if zeroDate || secretMirror.Status.LastSyncTime.IsZero() {
-		secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
-	}
-	if err := r.Status().Update(ctx, secretMirror); err != nil {
-		return err
-	}
-	return nil
-}
-
-func makeOwnSecretName(secretMirror *mirrorsv1alpha1.SecretMirror) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: secretMirror.Namespace,
-		Name:      secretMirror.Spec.Source.Name,
-	}
-}
-
-func secretDiffer(src, dest *v1.Secret) bool {
-	if len(src.Labels) != len(dest.Labels) {
-		return true
-	}
-
-	for k := range src.Labels {
-		if src.Labels[k] != dest.Labels[k] {
-			return true
-		}
-	}
-
-	if len(src.Data) != len(dest.Data) {
-		return true
-	}
-
-	for k := range src.Data {
-		if bytes.Compare(src.Data[k], dest.Data[k]) != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func copySecret(src, dest *v1.Secret) {
-	for k, v := range src.Labels {
-		dest.Labels[k] = v
-	}
-	for k, v := range src.Annotations {
-		dest.Annotations[k] = v
-	}
-	dest.Data = make(map[string][]byte)
-	for k, v := range src.Data {
-		dataCopy := make([]byte, len(v))
-		copy(dataCopy, v)
-		dest.Data[k] = dataCopy
-	}
-}
-
-func getManagedByMirrorValue(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
-}
-
-func (r *SecretMirrorReconciler) deleteExternalResources(ctx context.Context, secretMirror *mirrorsv1alpha1.SecretMirror) error {
-	var ownSecret v1.Secret
-	if err := r.Get(ctx, makeOwnSecretName(secretMirror), &ownSecret); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-
-	if err := r.Delete(ctx, &ownSecret); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-
-	return nil
-}
-
-// Helper functions to check and remove string from a slice of strings.
-func containsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.
