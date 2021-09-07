@@ -199,6 +199,13 @@ func (c *secretMirrorContext) deleteOne(ctx context.Context, name types.Namespac
 		return client.IgnoreNotFound(err)
 	}
 
+	correctValue := c.getManagedByMirrorValue()
+	if val, ok := secret.Annotations[managedByMirrorAnnotation]; !ok || val != correctValue {
+		logger.Info(fmt.Sprintf("secret %s/%s is not managed by SecretMirror %s",
+			secret.Namespace, secret.Name, correctValue))
+		return nil
+	}
+
 	logger.Info(fmt.Sprintf("deleted secret %s/%s", secret.Namespace, secret.Name))
 
 	if err := c.backend.Delete(ctx, &secret); err != nil {
