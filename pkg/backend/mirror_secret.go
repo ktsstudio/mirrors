@@ -45,10 +45,6 @@ func (c *secretMirrorContext) PollPeriodDuration() time.Duration {
 }
 
 func (c *secretMirrorContext) normalize() {
-	if c.secretMirror.Spec.Source.Namespace == "" {
-		c.secretMirror.Spec.Source.Namespace = c.secretMirror.Namespace
-	}
-
 	if c.secretMirror.Spec.Destination.Namespace == "" && c.secretMirror.Spec.Destination.NamespaceRegex == "" {
 		// trying to use pull mode
 		c.secretMirror.Spec.Destination.Namespace = c.secretMirror.Namespace
@@ -70,17 +66,14 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	c.secretMirror = &secretMirror
 	c.normalize()
 
-	dest := c.secretMirror.Spec.Destination
-	src := c.secretMirror.Spec.Source
-
-	if dest.Namespace == src.Namespace {
+	if c.secretMirror.Spec.Destination.Namespace == c.secretMirror.Namespace {
 		// if SecretMirror deployed into the source
 		return c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
 	}
 
 	sourceSecretName := types.NamespacedName{
-		Namespace: src.Namespace,
-		Name:      src.Name,
+		Namespace: c.secretMirror.Namespace,
+		Name:      c.secretMirror.Spec.Source.Name,
 	}
 
 	var sourceSecret v1.Secret
