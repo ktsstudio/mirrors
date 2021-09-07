@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
@@ -18,8 +19,9 @@ import (
 )
 
 var (
-	secretOwnerKey = ".metadata.controller"
-	apiGVStr       = mirrorsv1alpha1.GroupVersion.String()
+	secretOwnerKey          = ".metadata.controller"
+	apiGVStr                = mirrorsv1alpha1.GroupVersion.String()
+	ErrSourceObjectNotFound = errors.New("source object not found")
 )
 
 type secretMirrorContext struct {
@@ -58,6 +60,8 @@ func (c *secretMirrorContext) normalize() {
 }
 
 func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedName) error {
+	logger := log.FromContext(ctx)
+
 	var secretMirror mirrorsv1alpha1.SecretMirror
 	if err := c.backend.Client.Get(ctx, name, &secretMirror); err != nil {
 		return client.IgnoreNotFound(err)
@@ -81,8 +85,9 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 
 	var sourceSecret v1.Secret
 	if err := c.backend.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
+		logger.Info(fmt.Sprintf("secret %s not found, waiting to appear", sourceSecretName))
 		_ = c.SetStatusPending(ctx)
-		return err
+		return ErrSourceObjectNotFound
 	}
 
 	c.sourceSecret = &sourceSecret
