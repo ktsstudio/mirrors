@@ -44,10 +44,6 @@ var _ webhook.Defaulter = &SecretMirror{}
 func (r *SecretMirror) Default() {
 	secretmirrorlog.Info("default", "name", r.Name)
 
-	if r.Spec.Source.Namespace == "" {
-		r.Spec.Source.Namespace = r.Namespace
-	}
-
 	if r.Spec.PollPeriodSeconds == 0 {
 		r.Spec.PollPeriodSeconds = 3 * 60 // 3 minutes
 	}

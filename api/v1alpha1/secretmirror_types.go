@@ -22,8 +22,6 @@ import (
 )
 
 type SecretMirrorSource struct {
-	Namespace string `json:"namespace,omitempty"`
-
 	// +kubebuilder:validation:Required
 	Name string `json:"name,omitempty"`
 }
@@ -65,7 +63,7 @@ type SecretMirrorStatus struct {
 //+kubebuilder:subresource:status
 
 // SecretMirror is the Schema for the secretmirrors API
-// +kubebuilder:printcolumn:name="Source Namespace",type=string,JSONPath=`.spec.source.namespace`
+// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=`.metadata.namespace`
 // +kubebuilder:printcolumn:name="Source Name",type=string,JSONPath=`.spec.source.name`
 // +kubebuilder:printcolumn:name="Dest Namespace",type=string,JSONPath=`.spec.destination.namespace`
 // +kubebuilder:printcolumn:name="Dest Namespace Regex",type=string,JSONPath=`.spec.destination.namespaceRegex`
