@@ -47,11 +47,6 @@ func (r *SecretMirror) Default() {
 	if r.Spec.PollPeriodSeconds == 0 {
 		r.Spec.PollPeriodSeconds = 3 * 60 // 3 minutes
 	}
-
-	if r.Spec.Destination.Namespace == "" && r.Spec.Destination.NamespaceRegex == "" {
-		// trying to use pull mode
-		r.Spec.Destination.Namespace = r.Namespace
-	}
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
