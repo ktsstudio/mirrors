@@ -228,8 +228,8 @@ func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.Namespaced
 		return err
 	}
 
-	if err := c.validateAnnotations(ctx, destSecret); err != nil {
-		return err
+	if !c.validateAnnotations(ctx, destSecret) {
+		return nil
 	}
 
 	doCreate := false
@@ -250,7 +250,7 @@ func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.Namespaced
 	if !secretDiffer(c.sourceSecret, destSecret) {
 		logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s are identical",
 			c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
-		return c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
+		return nil
 	}
 
 	copySecret(c.sourceSecret, destSecret)
@@ -259,13 +259,11 @@ func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.Namespaced
 	if doCreate {
 		if err := c.backend.Create(ctx, destSecret); err != nil {
 			logger.Error(err, "unable to create own secret for SecretMirror", "secret", destSecret)
-			_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 			return err
 		}
 	} else {
 		if err := c.backend.Update(ctx, destSecret); err != nil {
 			logger.Error(err, "unable to update dest secret for SecretMirror", "secret", destSecret)
-			_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 			return err
 		}
 	}
@@ -284,9 +282,9 @@ func (c *secretMirrorContext) fetchSecret(ctx context.Context, name types.Namesp
 	return &secret, nil
 }
 
-func (c *secretMirrorContext) validateAnnotations(ctx context.Context, secret *v1.Secret) error {
+func (c *secretMirrorContext) validateAnnotations(ctx context.Context, secret *v1.Secret) bool {
 	if secret == nil {
-		return nil
+		return true
 	}
 
 	logger := log.FromContext(ctx)
@@ -295,21 +293,19 @@ func (c *secretMirrorContext) validateAnnotations(ctx context.Context, secret *v
 	managedByMirrorValue := c.getManagedByMirrorValue()
 
 	if value == managedByMirrorValue {
-		return nil
+		return true
 	}
 
-	logger.Error(
-		errNotManagedByMirror,
+	logger.Info(
 		fmt.Sprintf("secret %s/%s found but is not managed by SecretMirror %s/%s",
-			c.secretMirror.Spec.Source.Namespace,
-			c.secretMirror.Spec.Source.Name,
+			secret.Namespace,
+			secret.Name,
 			c.secretMirror.Namespace,
 			c.secretMirror.Name,
 		),
 	)
 
-	_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
-	return errNotManagedByMirror
+	return false
 }
 
 func (c *secretMirrorContext) getManagedByMirrorValue() string {
