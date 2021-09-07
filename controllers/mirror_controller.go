@@ -18,24 +18,23 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
 	"github.com/ktsstudio/mirrors/pkg/backend"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sync"
 )
 
-var (
-	secretOwnerKey = ".metadata.controller"
-	apiGVStr       = mirrorsv1alpha1.GroupVersion.String()
-)
-
-// SecretMirrorReconciler reconciles a SecretMirror object
-type SecretMirrorReconciler struct {
+// MirrorReconciler reconciles a SecretMirror object
+type MirrorReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme  *runtime.Scheme
+	Backend backend.MirrorBackend
 }
 
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors,verbs=get;list;watch;create;update;patch;delete
@@ -53,20 +52,13 @@ type SecretMirrorReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
-func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	b, err := backend.MakeSecretMirrorBackend(ctx, r.Client, req.NamespacedName)
-	if err != nil || b == nil {
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
+func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	mirrorContext, err := r.Backend.Init(ctx, req.NamespacedName)
+	if err != nil || mirrorContext == nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := b.Init(ctx); err != nil {
-		return ctrl.Result{Requeue: true}, err
-	}
-
-	stopReconcile, err := b.SetupOrRunFinalizer(ctx)
+	stopReconcile, err := mirrorContext.SetupOrRunFinalizer(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -75,43 +67,70 @@ func (r *SecretMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	if b.MirrorStatus() == "" {
-		if err := b.SetStatusPending(ctx); err != nil {
+	if mirrorContext.MirrorStatus() == "" {
+		if err := mirrorContext.SetStatusPending(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	if err := b.Sync(ctx); err != nil {
+	if err := r.Sync(ctx, mirrorContext); err != nil {
 		return ctrl.Result{Requeue: true}, err
 	}
 
 	return ctrl.Result{
-		RequeueAfter: b.PollPeriodDuration(),
+		RequeueAfter: mirrorContext.PollPeriodDuration(),
 	}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *SecretMirrorReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1.Secret{}, secretOwnerKey, func(rawObj client.Object) []string {
-		// grab the secret object, extract the owner...
-		secret := rawObj.(*v1.Secret)
-		owner := metav1.GetControllerOf(secret)
-		if owner == nil {
-			return nil
-		}
-		// ...make sure it's a SecretMirror...
-		if owner.APIVersion != apiGVStr || owner.Kind != "SecretMirror" {
-			return nil
-		}
+func (r *MirrorReconciler) Sync(ctx context.Context, mirrorContext backend.MirrorContext) error {
+	logger := log.FromContext(ctx)
 
-		// ...and if so, return it
-		return []string{owner.Name}
-	}); err != nil {
+	namespaces, err := mirrorContext.GetDestinationNamespaces()
+	if err != nil {
+		return err
+	}
+	wg := &sync.WaitGroup{}
+	g := &errgroup.Group{}
+	for _, ns := range namespaces {
+		ns := ns
+		wg.Add(1)
+
+		if err := r.Backend.Pool().Submit(func() {
+			g.Go(func() error {
+				defer wg.Done()
+				return mirrorContext.SyncOne(ctx, types.NamespacedName{
+					Namespace: ns,
+					Name:      mirrorContext.ObjectName(),
+				})
+			})
+		}); err != nil {
+			return err
+		}
+	}
+	wg.Wait()
+
+	if err := g.Wait(); err != nil {
+		logger.Error(err, fmt.Sprintf("unable to sync some secrets for %s", mirrorContext))
+		_ = mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&mirrorsv1alpha1.SecretMirror{}).
-		Owns(&v1.Secret{}).
-		Complete(r)
+	if err := mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive); err != nil {
+		logger.Error(err, "unable to update SecretMirror status")
+		return err
+	}
+	return nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *MirrorReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	builder, err := r.Backend.SetupWithManager(mgr)
+	if err != nil {
+		return err
+	}
+	return builder.Complete(r)
+}
+
+func (r *MirrorReconciler) Cleanup() {
+	r.Backend.Cleanup()
 }

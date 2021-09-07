@@ -2,10 +2,14 @@ package backend
 
 import (
 	"bytes"
-	"context"
+	"errors"
+	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	v1 "k8s.io/api/core/v1"
 	"regexp"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	errNoNamespaces = errors.New("no namespaces found")
 )
 
 func secretDiffer(src, dest *v1.Secret) bool {
@@ -56,20 +60,19 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
-func getNamespaces(ctx context.Context, cli client.Client) ([]v1.Namespace, error) {
-	namespaces := &v1.NamespaceList{}
-	if err := cli.List(ctx, namespaces); err != nil {
-		return nil, err
+func getFilteredNamespaces(keeper *nskeeper.NSKeeper, regex *regexp.Regexp) ([]string, error) {
+	namespacesList := keeper.GetNamespaces()
+	if namespacesList == nil {
+		return nil, errNoNamespaces
 	}
-
-	return namespaces.Items, nil
+	return filterNamespacesByRegex(namespacesList.Items, regex), nil
 }
 
-func filterNamespacesByRegex(namespaces []v1.Namespace, regex *regexp.Regexp) []v1.Namespace {
-	result := make([]v1.Namespace, 0, len(namespaces))
+func filterNamespacesByRegex(namespaces []v1.Namespace, regex *regexp.Regexp) []string {
+	result := make([]string, 0, len(namespaces))
 	for _, ns := range namespaces {
 		if regex.MatchString(ns.Name) {
-			result = append(result, ns)
+			result = append(result, ns.Name)
 		}
 	}
 	return result
