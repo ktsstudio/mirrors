@@ -45,11 +45,6 @@ func (c *secretMirrorContext) PollPeriodDuration() time.Duration {
 }
 
 func (c *secretMirrorContext) normalize() {
-	if c.secretMirror.Spec.Destination.Namespace == "" && c.secretMirror.Spec.Destination.NamespaceRegex == "" {
-		// trying to use pull mode
-		c.secretMirror.Spec.Destination.Namespace = c.secretMirror.Namespace
-	}
-
 	if c.secretMirror.Spec.PollPeriodSeconds == 0 {
 		c.secretMirror.Spec.PollPeriodSeconds = 3 * 60
 	}
