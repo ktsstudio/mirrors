@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
 	"github.com/ktsstudio/mirrors/pkg/backend"
 	"golang.org/x/sync/errgroup"
@@ -28,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sync"
+	"time"
 )
 
 // MirrorReconciler reconciles a SecretMirror object
@@ -55,6 +55,11 @@ type MirrorReconciler struct {
 func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	mirrorContext, err := r.Backend.Init(ctx, req.NamespacedName)
 	if err != nil || mirrorContext == nil {
+		if err == backend.ErrSourceObjectNotFound {
+			return ctrl.Result{
+				RequeueAfter: 30 * time.Second,
+			}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -110,13 +115,13 @@ func (r *MirrorReconciler) Sync(ctx context.Context, mirrorContext backend.Mirro
 	wg.Wait()
 
 	if err := g.Wait(); err != nil {
-		logger.Error(err, fmt.Sprintf("unable to sync some secrets for %s", mirrorContext))
+		logger.Error(err, "unable to sync some objects")
 		_ = mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 		return err
 	}
 
 	if err := mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive); err != nil {
-		logger.Error(err, "unable to update SecretMirror status")
+		logger.Error(err, "unable to update status")
 		return err
 	}
 	return nil
