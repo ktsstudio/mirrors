@@ -18,6 +18,8 @@ package main
 
 import (
 	"flag"
+	"github.com/ktsstudio/mirrors/pkg/backend"
+	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -78,13 +80,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.SecretMirrorReconciler{
+	nsKeeper := &nskeeper.NSKeeper{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SecretMirror")
+	}
+
+	secretMirrorReconciler := &controllers.MirrorReconciler{
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Backend: backend.MustMakeSecretMirrorBackend(mgr.GetClient(), nsKeeper),
+	}
+	defer secretMirrorReconciler.Cleanup()
+
+	if err = secretMirrorReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create secretmirror controller", "controller", "SecretMirror")
 		os.Exit(1)
 	}
+
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = (&mirrorsv1alpha1.SecretMirror{}).SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "SecretMirror")
@@ -102,8 +113,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	workContext := ctrl.SetupSignalHandler()
+
+	setupLog.Info("starting NSKeeper")
+	go nsKeeper.Run(workContext)
+
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(workContext); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

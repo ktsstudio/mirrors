@@ -4,76 +4,74 @@ import (
 	"context"
 	"fmt"
 	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
+	"github.com/ktsstudio/mirrors/pkg/nskeeper"
+	"github.com/panjf2000/ants/v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"regexp"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"time"
 )
 
-type secretMirrorBackend struct {
-	client.Client
+var (
+	secretOwnerKey = ".metadata.controller"
+	apiGVStr       = mirrorsv1alpha1.GroupVersion.String()
+)
+
+type secretMirrorContext struct {
+	backend *secretMirrorBackend
+
 	secretMirror       *mirrorsv1alpha1.SecretMirror
 	sourceSecret       *v1.Secret
 	destNamespaceRegex *regexp.Regexp
 }
 
-func MakeSecretMirrorBackend(ctx context.Context, cli client.Client, name types.NamespacedName) (MirrorBackend, error) {
+func (c *secretMirrorContext) ObjectName() string {
+	return c.secretMirror.Spec.Source.Name
+}
+
+func (c *secretMirrorContext) MirrorStatus() mirrorsv1alpha1.MirrorStatus {
+	return c.secretMirror.Status.MirrorStatus
+}
+
+func (c *secretMirrorContext) PollPeriodDuration() time.Duration {
+	return c.secretMirror.PollPeriodDuration()
+}
+
+func (c *secretMirrorContext) normalize() {
+	if c.secretMirror.Spec.Source.Namespace == "" {
+		c.secretMirror.Spec.Source.Namespace = c.secretMirror.Namespace
+	}
+
+	if c.secretMirror.Spec.Destination.Namespace == "" && c.secretMirror.Spec.Destination.NamespaceRegex == "" {
+		// trying to use pull mode
+		c.secretMirror.Spec.Destination.Namespace = c.secretMirror.Namespace
+	}
+
+	if c.secretMirror.Spec.PollPeriodSeconds == 0 {
+		c.secretMirror.Spec.PollPeriodSeconds = 3 * 60
+	}
+}
+
+func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedName) error {
 	var secretMirror mirrorsv1alpha1.SecretMirror
-	if err := cli.Get(ctx, name, &secretMirror); err != nil {
-		return nil, client.IgnoreNotFound(err)
-	}
-	b := &secretMirrorBackend{
-		Client:       cli,
-		secretMirror: &secretMirror,
-	}
-	b.normalize()
-	return b, nil
-}
-
-func (b *secretMirrorBackend) MirrorStatus() mirrorsv1alpha1.MirrorStatus {
-	return b.secretMirror.Status.MirrorStatus
-}
-
-func (b *secretMirrorBackend) PollPeriodDuration() time.Duration {
-	return b.secretMirror.PollPeriodDuration()
-}
-
-func (b *secretMirrorBackend) SetStatusPending(ctx context.Context) error {
-	if b.secretMirror.Status.MirrorStatus == mirrorsv1alpha1.MirrorStatusPending {
-		return nil
+	if err := c.backend.Client.Get(ctx, name, &secretMirror); err != nil {
+		return client.IgnoreNotFound(err)
 	}
 
-	b.secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
-	if b.secretMirror.Status.LastSyncTime.IsZero() {
-		b.secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
-	}
-	if err := b.Status().Update(ctx, b.secretMirror); err != nil {
-		return err
-	}
-	return nil
-}
+	c.secretMirror = &secretMirror
+	c.normalize()
 
-func (b *secretMirrorBackend) SetStatus(ctx context.Context, status mirrorsv1alpha1.MirrorStatus) error {
-	if b.secretMirror.Status.MirrorStatus == status {
-		return nil
-	}
-
-	b.secretMirror.Status.MirrorStatus = status
-	b.secretMirror.Status.LastSyncTime = metav1.Now()
-	return b.Status().Update(ctx, b.secretMirror)
-}
-
-func (b *secretMirrorBackend) Init(ctx context.Context) error {
-	dest := b.secretMirror.Spec.Destination
-	src := b.secretMirror.Spec.Source
+	dest := c.secretMirror.Spec.Destination
+	src := c.secretMirror.Spec.Source
 
 	if dest.Namespace == src.Namespace {
 		// if SecretMirror deployed into the source
-		return b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
+		return c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
 	}
 
 	sourceSecretName := types.NamespacedName{
@@ -82,44 +80,44 @@ func (b *secretMirrorBackend) Init(ctx context.Context) error {
 	}
 
 	var sourceSecret v1.Secret
-	if err := b.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
-		_ = b.SetStatusPending(ctx)
+	if err := c.backend.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
+		_ = c.SetStatusPending(ctx)
 		return err
 	}
 
-	b.sourceSecret = &sourceSecret
+	c.sourceSecret = &sourceSecret
 
-	if b.secretMirror.Spec.Destination.NamespaceRegex != "" {
-		regex, err := regexp.Compile(b.secretMirror.Spec.Destination.NamespaceRegex)
+	if c.secretMirror.Spec.Destination.NamespaceRegex != "" {
+		regex, err := regexp.Compile(c.secretMirror.Spec.Destination.NamespaceRegex)
 		if err != nil {
 			return err
 		}
-		b.destNamespaceRegex = regex
+		c.destNamespaceRegex = regex
 	}
 
 	return nil
 }
 
 // SetupOrRunFinalizer returns (stopReconciliation, error)
-func (b *secretMirrorBackend) SetupOrRunFinalizer(ctx context.Context) (bool, error) {
+func (c *secretMirrorContext) SetupOrRunFinalizer(ctx context.Context) (bool, error) {
 	logger := log.FromContext(ctx)
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if b.secretMirror.ObjectMeta.DeletionTimestamp.IsZero() {
+	if c.secretMirror.ObjectMeta.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then lets add the finalizer and update the object. This is equivalent
 		// registering our finalizer.
-		if !containsString(b.secretMirror.GetFinalizers(), mirrorsFinalizerName) {
-			controllerutil.AddFinalizer(b.secretMirror, mirrorsFinalizerName)
-			if err := b.Update(ctx, b.secretMirror); err != nil {
+		if !containsString(c.secretMirror.GetFinalizers(), mirrorsFinalizerName) {
+			controllerutil.AddFinalizer(c.secretMirror, mirrorsFinalizerName)
+			if err := c.backend.Update(ctx, c.secretMirror); err != nil {
 				return false, err
 			}
 		}
 	} else {
 		// The object is being deleted
-		if containsString(b.secretMirror.GetFinalizers(), mirrorsFinalizerName) {
+		if containsString(c.secretMirror.GetFinalizers(), mirrorsFinalizerName) {
 			// our finalizer is present, so lets handle any external dependency
-			if err := b.deleteExternalResources(ctx); err != nil {
+			if err := c.deleteExternalResources(ctx); err != nil {
 				// if fail to delete the external dependency here, return with error
 				// so that it can be retried
 				return false, err
@@ -127,8 +125,8 @@ func (b *secretMirrorBackend) SetupOrRunFinalizer(ctx context.Context) (bool, er
 			logger.Info("deleted managed objects")
 
 			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(b.secretMirror, mirrorsFinalizerName)
-			if err := b.Update(ctx, b.secretMirror); err != nil {
+			controllerutil.RemoveFinalizer(c.secretMirror, mirrorsFinalizerName)
+			if err := c.backend.Update(ctx, c.secretMirror); err != nil {
 				return false, err
 			}
 		}
@@ -140,104 +138,92 @@ func (b *secretMirrorBackend) SetupOrRunFinalizer(ctx context.Context) (bool, er
 	return false, nil
 }
 
-func (b *secretMirrorBackend) normalize() {
-	if b.secretMirror.Spec.Source.Namespace == "" {
-		b.secretMirror.Spec.Source.Namespace = b.secretMirror.Namespace
+func (c *secretMirrorContext) SetStatusPending(ctx context.Context) error {
+	if c.secretMirror.Status.MirrorStatus == mirrorsv1alpha1.MirrorStatusPending {
+		return nil
 	}
 
-	if b.secretMirror.Spec.Destination.Namespace == "" && b.secretMirror.Spec.Destination.NamespaceRegex == "" {
-		// trying to use pull mode
-		b.secretMirror.Spec.Destination.Namespace = b.secretMirror.Namespace
+	c.secretMirror.Status.MirrorStatus = mirrorsv1alpha1.MirrorStatusPending
+	if c.secretMirror.Status.LastSyncTime.IsZero() {
+		c.secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
 	}
+	if err := c.backend.Status().Update(ctx, c.secretMirror); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (b *secretMirrorBackend) deleteExternalResources(ctx context.Context) error {
-	dest := b.secretMirror.Spec.Destination
-	if dest.Namespace != "" {
-		return b.deleteOne(ctx, types.NamespacedName{
-			Namespace: dest.Namespace,
-			Name:      b.secretMirror.Spec.Source.Name,
-		})
-	} else if b.destNamespaceRegex != nil {
-		namespaces, err := getNamespaces(ctx, b.Client)
-		if err != nil {
-			return err
-		}
-		namespaces = filterNamespacesByRegex(namespaces, b.destNamespaceRegex)
+func (c *secretMirrorContext) SetStatus(ctx context.Context, status mirrorsv1alpha1.MirrorStatus) error {
+	if c.secretMirror.Status.MirrorStatus == status {
+		return nil
+	}
 
-		for _, ns := range namespaces {
-			if err := b.deleteOne(ctx, types.NamespacedName{
-				Namespace: ns.Name,
-				Name:      b.secretMirror.Spec.Source.Name,
-			}); err != nil {
-				return err
-			}
+	c.secretMirror.Status.MirrorStatus = status
+	c.secretMirror.Status.LastSyncTime = metav1.Now()
+	return c.backend.Status().Update(ctx, c.secretMirror)
+}
+
+func (c *secretMirrorContext) GetDestinationNamespaces() ([]string, error) {
+	if c.secretMirror.Spec.Destination.Namespace != "" {
+		return []string{
+			c.secretMirror.Spec.Destination.Namespace,
+		}, nil
+	}
+
+	if c.destNamespaceRegex != nil {
+		namespaces, err := getFilteredNamespaces(c.backend.nsKeeper, c.destNamespaceRegex)
+		if err != nil {
+			return nil, err
+		}
+		return namespaces, nil
+	}
+
+	return nil, nil
+}
+
+func (c *secretMirrorContext) deleteExternalResources(ctx context.Context) error {
+	namespaces, err := c.GetDestinationNamespaces()
+	if err != nil {
+		return err
+	}
+
+	for _, ns := range namespaces {
+		if err := c.deleteOne(ctx, types.NamespacedName{
+			Namespace: ns,
+			Name:      c.secretMirror.Spec.Source.Name,
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (b *secretMirrorBackend) deleteOne(ctx context.Context, name types.NamespacedName) error {
+func (c *secretMirrorContext) deleteOne(ctx context.Context, name types.NamespacedName) error {
 	logger := log.FromContext(ctx)
 
 	var secret v1.Secret
-	if err := b.Get(ctx, name, &secret); err != nil {
+	if err := c.backend.Get(ctx, name, &secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
 	logger.Info(fmt.Sprintf("deleted secret %s/%s", secret.Namespace, secret.Name))
 
-	if err := b.Delete(ctx, &secret); err != nil {
+	if err := c.backend.Delete(ctx, &secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
 	return nil
 }
 
-func (b *secretMirrorBackend) Sync(ctx context.Context) error {
+func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.NamespacedName) error {
 	logger := log.FromContext(ctx)
 
-	dest := b.secretMirror.Spec.Destination
-	if dest.Namespace != "" {
-		if err := b.syncOne(ctx, types.NamespacedName{
-			Namespace: dest.Namespace,
-			Name:      b.sourceSecret.Name,
-		}); err != nil {
-			return err
-		}
-	} else if b.destNamespaceRegex != nil {
-		namespaces, err := getNamespaces(ctx, b.Client)
-		if err != nil {
-			return err
-		}
-		namespaces = filterNamespacesByRegex(namespaces, b.destNamespaceRegex)
-
-		for _, ns := range namespaces {
-			if err := b.syncOne(ctx, types.NamespacedName{
-				Namespace: ns.Name,
-				Name:      b.sourceSecret.Name,
-			}); err != nil {
-				return err
-			}
-		}
-	}
-
-	if err := b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive); err != nil {
-		logger.Error(err, "unable to update SecretMirror status")
-		return err
-	}
-	return nil
-}
-
-func (b *secretMirrorBackend) syncOne(ctx context.Context, dest types.NamespacedName) error {
-	logger := log.FromContext(ctx)
-
-	destSecret, err := b.fetchSecret(ctx, dest)
+	destSecret, err := c.fetchSecret(ctx, dest)
 	if err != nil {
 		return err
 	}
 
-	if err := b.validateAnnotations(ctx, destSecret); err != nil {
+	if err := c.validateAnnotations(ctx, destSecret); err != nil {
 		return err
 	}
 
@@ -251,49 +237,49 @@ func (b *secretMirrorBackend) syncOne(ctx context.Context, dest types.Namespaced
 				Labels:      make(map[string]string),
 				Annotations: make(map[string]string),
 			},
-			Type: b.sourceSecret.Type,
+			Type: c.sourceSecret.Type,
 		}
 		doCreate = true
 	}
 
-	if !secretDiffer(b.sourceSecret, destSecret) {
+	if !secretDiffer(c.sourceSecret, destSecret) {
 		logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s are identical",
-			b.sourceSecret.Namespace, b.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
-		return b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
+			c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
+		return c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive)
 	}
 
-	copySecret(b.sourceSecret, destSecret)
-	destSecret.Annotations[managedByMirrorAnnotation] = b.getManagedByMirrorValue()
+	copySecret(c.sourceSecret, destSecret)
+	destSecret.Annotations[managedByMirrorAnnotation] = c.getManagedByMirrorValue()
 
 	if doCreate {
-		if err := b.Create(ctx, destSecret); err != nil {
+		if err := c.backend.Create(ctx, destSecret); err != nil {
 			logger.Error(err, "unable to create own secret for SecretMirror", "secret", destSecret)
-			_ = b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
+			_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 			return err
 		}
 	} else {
-		if err := b.Update(ctx, destSecret); err != nil {
+		if err := c.backend.Update(ctx, destSecret); err != nil {
 			logger.Error(err, "unable to update dest secret for SecretMirror", "secret", destSecret)
-			_ = b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
+			_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
 			return err
 		}
 	}
 
 	logger.Info(fmt.Sprintf("successfully mirrored secret %s/%s to %s/%s",
-		b.sourceSecret.Namespace, b.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
+		c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
 
 	return nil
 }
 
-func (b *secretMirrorBackend) fetchSecret(ctx context.Context, name types.NamespacedName) (*v1.Secret, error) {
+func (c *secretMirrorContext) fetchSecret(ctx context.Context, name types.NamespacedName) (*v1.Secret, error) {
 	var secret v1.Secret
-	if err := b.Get(ctx, name, &secret); err != nil {
+	if err := c.backend.Get(ctx, name, &secret); err != nil {
 		return nil, client.IgnoreNotFound(err)
 	}
 	return &secret, nil
 }
 
-func (b *secretMirrorBackend) validateAnnotations(ctx context.Context, secret *v1.Secret) error {
+func (c *secretMirrorContext) validateAnnotations(ctx context.Context, secret *v1.Secret) error {
 	if secret == nil {
 		return nil
 	}
@@ -301,29 +287,103 @@ func (b *secretMirrorBackend) validateAnnotations(ctx context.Context, secret *v
 	logger := log.FromContext(ctx)
 
 	value := secret.Annotations[managedByMirrorAnnotation]
-	managedByMirrorValue := b.getManagedByMirrorValue()
+	managedByMirrorValue := c.getManagedByMirrorValue()
 
 	if value == managedByMirrorValue {
 		return nil
 	}
 
 	logger.Error(
-		notManagedByMirror,
+		errNotManagedByMirror,
 		fmt.Sprintf("secret %s/%s found but is not managed by SecretMirror %s/%s",
-			b.secretMirror.Spec.Source.Namespace,
-			b.secretMirror.Spec.Source.Name,
-			b.secretMirror.Namespace,
-			b.secretMirror.Name,
+			c.secretMirror.Spec.Source.Namespace,
+			c.secretMirror.Spec.Source.Name,
+			c.secretMirror.Namespace,
+			c.secretMirror.Name,
 		),
 	)
 
-	_ = b.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
-	return notManagedByMirror
+	_ = c.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
+	return errNotManagedByMirror
 }
 
-func (b *secretMirrorBackend) getManagedByMirrorValue() string {
+func (c *secretMirrorContext) getManagedByMirrorValue() string {
 	return getManagedByMirrorValue(
-		b.secretMirror.Namespace,
-		b.secretMirror.Name,
+		c.secretMirror.Namespace,
+		c.secretMirror.Name,
 	)
+}
+
+/// Backend
+
+type secretMirrorBackend struct {
+	client.Client
+	nsKeeper *nskeeper.NSKeeper
+	pool     *ants.Pool
+}
+
+func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper) (MirrorBackend, error) {
+	pool, err := ants.NewPool(DefaultWorkerPoolSize)
+	if err != nil {
+		return nil, err
+	}
+	return &secretMirrorBackend{
+		Client:   cli,
+		nsKeeper: nsKeeper,
+		pool:     pool,
+	}, nil
+}
+
+func (b *secretMirrorBackend) Pool() *ants.Pool {
+	return b.pool
+}
+
+func MustMakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper) MirrorBackend {
+	backend, err := MakeSecretMirrorBackend(cli, nsKeeper)
+	if err != nil {
+		panic(err)
+	}
+	return backend
+}
+
+func (b *secretMirrorBackend) SetupWithManager(mgr ctrl.Manager) (*ctrl.Builder, error) {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1.Secret{}, secretOwnerKey, func(rawObj client.Object) []string {
+		// grab the secret object, extract the owner...
+		secret := rawObj.(*v1.Secret)
+		owner := metav1.GetControllerOf(secret)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a SecretMirror...
+		if owner.APIVersion != apiGVStr || owner.Kind != "SecretMirror" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return nil, err
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&mirrorsv1alpha1.SecretMirror{}).
+		Owns(&v1.Secret{}), nil
+}
+
+func (b *secretMirrorBackend) Init(ctx context.Context, name types.NamespacedName) (MirrorContext, error) {
+	mirrorContext := &secretMirrorContext{
+		backend: b,
+	}
+	if err := mirrorContext.Init(ctx, name); err != nil {
+		return nil, err
+	}
+
+	if mirrorContext.secretMirror == nil {
+		return nil, nil
+	}
+	return mirrorContext, nil
+}
+
+func (b *secretMirrorBackend) Cleanup() {
+	b.pool.Release()
 }
