@@ -18,9 +18,10 @@ package main
 
 import (
 	"flag"
+	"os"
+
 	"github.com/ktsstudio/mirrors/pkg/backend"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
-	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -102,6 +103,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if err = (&controllers.NamespaceReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr, nsKeeper); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Namespace")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -116,7 +124,7 @@ func main() {
 	workContext := ctrl.SetupSignalHandler()
 
 	setupLog.Info("starting NSKeeper")
-	go nsKeeper.Run(workContext)
+	go nsKeeper.InitNamespaces(workContext)
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(workContext); err != nil {

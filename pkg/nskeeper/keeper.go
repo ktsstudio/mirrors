@@ -4,94 +4,25 @@ import (
 	"context"
 	"fmt"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"regexp"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
+type mirrorRegex struct {
+	Name  types.NamespacedName
+	Regex *regexp.Regexp
+}
+
 type NSKeeper struct {
 	client.Client
-	Period     time.Duration
-	namespaces *v1.NamespaceList
-	mutex      sync.Mutex
-	running    uint32
-}
-
-func (k *NSKeeper) GetNamespaces() *v1.NamespaceList {
-	return k.namespaces
-}
-
-func (k *NSKeeper) IsRunning() bool {
-	value := atomic.LoadUint32(&k.running)
-	return value > 0
-}
-
-func (k *NSKeeper) setIsRunning(flag bool) {
-	var value uint32
-	if flag {
-		value = 1
-	} else {
-		value = 0
-	}
-	atomic.StoreUint32(&k.running, value)
-}
-
-func (k *NSKeeper) Run(ctx context.Context) {
-	if k.Period == 0 {
-		k.Period = 1 * time.Minute
-	}
-
-	logger := log.FromContext(ctx)
-
-	if k.IsRunning() {
-		logger.Info("nskeeper is already running")
-		return
-	}
-
-	k.setIsRunning(true)
-	defer func() {
-		k.setIsRunning(false)
-	}()
-
-	sleepPeriod := k.Period
-
-	if err := k.loop(ctx); err != nil {
-		logger.Info(fmt.Sprintf("Error happened in nskeeper loop: %s", err))
-		sleepPeriod = 5 * time.Second
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			time.Sleep(sleepPeriod)
-			if err := k.loop(ctx); err != nil {
-				logger.Info(fmt.Sprintf("Error happened in nskeeper loop: %s", err))
-				sleepPeriod = 5 * time.Second
-			} else {
-				sleepPeriod = k.Period
-			}
-		}
-	}
-}
-
-func (k *NSKeeper) loop(ctx context.Context) error {
-	logger := log.FromContext(ctx)
-
-	k.mutex.Lock()
-	defer k.mutex.Unlock()
-
-	nsList, err := k.retrieveNamespaces(ctx)
-	if err != nil {
-		return err
-	}
-
-	k.namespaces = nsList
-	logger.Info(fmt.Sprintf("nskeeper: refreshed namespaces list. total count: %d", len(nsList.Items)))
-	return nil
+	pairs           map[string]map[string]*mirrorRegex // namespace -> name -> *mirrorRegex
+	namespaces      map[string]struct{}
+	pairsMutex      sync.RWMutex
+	namespacesMutex sync.RWMutex
 }
 
 func (k *NSKeeper) retrieveNamespaces(ctx context.Context) (*v1.NamespaceList, error) {
@@ -101,4 +32,130 @@ func (k *NSKeeper) retrieveNamespaces(ctx context.Context) (*v1.NamespaceList, e
 	}
 
 	return namespaces, nil
+}
+
+func (k *NSKeeper) RegisterNamespaceRegex(mirror types.NamespacedName, regex *regexp.Regexp) {
+	k.pairsMutex.Lock()
+	defer k.pairsMutex.Unlock()
+
+	if k.pairs == nil {
+		k.pairs = make(map[string]map[string]*mirrorRegex)
+	}
+	if _, ok := k.pairs[mirror.Namespace]; !ok {
+		k.pairs[mirror.Namespace] = make(map[string]*mirrorRegex)
+	}
+
+	k.pairs[mirror.Namespace][mirror.Name] = &mirrorRegex{
+		Name:  mirror,
+		Regex: regex,
+	}
+}
+
+func (k *NSKeeper) DeregisterNamespaceRegex(mirror types.NamespacedName) {
+	k.pairsMutex.Lock()
+	defer k.pairsMutex.Unlock()
+
+	if k.pairs == nil {
+		return
+	}
+	if _, ok := k.pairs[mirror.Namespace]; !ok {
+		return
+	}
+	if _, ok := k.pairs[mirror.Namespace][mirror.Name]; !ok {
+		return
+	}
+
+	delete(k.pairs[mirror.Namespace], mirror.Name)
+}
+
+func (k *NSKeeper) AddNamespace(ns string) {
+	k.namespacesMutex.Lock()
+	defer k.namespacesMutex.Unlock()
+	k.addNamespace(ns)
+}
+
+func (k *NSKeeper) addNamespace(ns string) {
+	if _, ok := k.namespaces[ns]; ok {
+		return
+	}
+	if k.namespaces == nil {
+		k.namespaces = make(map[string]struct{})
+	}
+	k.namespaces[ns] = struct{}{}
+}
+
+func (k *NSKeeper) DeleteNamespace(ns string) {
+	k.namespacesMutex.Lock()
+	defer k.namespacesMutex.Unlock()
+	delete(k.namespaces, ns)
+}
+
+func (k *NSKeeper) FindMatchingMirrors(ns string) []types.NamespacedName {
+	k.pairsMutex.RLock()
+	defer k.pairsMutex.RUnlock()
+
+	if k.pairs == nil {
+		return nil
+	}
+
+	var result []types.NamespacedName
+	for _, mirrors := range k.pairs {
+		for _, pair := range mirrors {
+			if pair.Regex.MatchString(ns) {
+				result = append(result, pair.Name)
+			}
+		}
+	}
+	return result
+}
+
+func (k *NSKeeper) FindMatchingNamespaces(mirror types.NamespacedName) []string {
+	k.pairsMutex.RLock()
+	defer k.pairsMutex.RUnlock()
+	k.namespacesMutex.RLock()
+	defer k.namespacesMutex.RUnlock()
+
+	if k.pairs == nil {
+		return nil
+	}
+
+	pair := k.pairs[mirror.Namespace][mirror.Name]
+	if pair == nil {
+		return nil
+	}
+
+	var result []string
+	for ns := range k.namespaces {
+		if pair.Regex.MatchString(ns) {
+			result = append(result, ns)
+		}
+	}
+	return result
+}
+
+func (k *NSKeeper) InitNamespaces(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	k.namespacesMutex.Lock()
+	defer k.namespacesMutex.Unlock()
+
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			namespaces, err := k.retrieveNamespaces(ctx)
+			if err != nil {
+				logger.Info(fmt.Sprintf("nskeeper: error initializing namespaces: %s", err))
+				time.Sleep(3 * time.Second)
+				goto loop
+			}
+
+			for _, ns := range namespaces.Items {
+				k.addNamespace(ns.Name)
+			}
+			logger.Info(fmt.Sprintf("nskeeper: initialized with %d namespaces", len(k.namespaces)))
+			return
+		}
+	}
 }
