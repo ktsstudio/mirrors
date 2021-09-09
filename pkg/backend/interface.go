@@ -16,7 +16,7 @@ type MirrorContext interface {
 
 	Init(ctx context.Context, name types.NamespacedName) error
 	SyncOne(ctx context.Context, dest types.NamespacedName) error
-	GetDestinationNamespaces() ([]string, error)
+	GetDestinationNamespaces() []string
 	SetupOrRunFinalizer(ctx context.Context) (bool, error)
 	SetStatusPending(ctx context.Context) error
 	SetStatus(ctx context.Context, status mirrorsv1alpha1.MirrorStatus) error

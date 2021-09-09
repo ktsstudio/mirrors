@@ -27,9 +27,8 @@ var (
 type secretMirrorContext struct {
 	backend *secretMirrorBackend
 
-	secretMirror       *mirrorsv1alpha1.SecretMirror
-	sourceSecret       *v1.Secret
-	destNamespaceRegex *regexp.Regexp
+	secretMirror *mirrorsv1alpha1.SecretMirror
+	sourceSecret *v1.Secret
 }
 
 func (c *secretMirrorContext) ObjectName() string {
@@ -85,7 +84,7 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 		if err != nil {
 			return err
 		}
-		c.destNamespaceRegex = regex
+		c.backend.nsKeeper.RegisterNamespaceRegex(name, regex)
 	}
 
 	return nil
@@ -156,29 +155,26 @@ func (c *secretMirrorContext) SetStatus(ctx context.Context, status mirrorsv1alp
 	return c.backend.Status().Update(ctx, c.secretMirror)
 }
 
-func (c *secretMirrorContext) GetDestinationNamespaces() ([]string, error) {
+func (c *secretMirrorContext) GetDestinationNamespaces() []string {
 	if c.secretMirror.Spec.Destination.Namespace != "" {
 		return []string{
 			c.secretMirror.Spec.Destination.Namespace,
-		}, nil
-	}
-
-	if c.destNamespaceRegex != nil {
-		namespaces, err := getFilteredNamespaces(c.backend.nsKeeper, c.destNamespaceRegex)
-		if err != nil {
-			return nil, err
 		}
-		return namespaces, nil
 	}
 
-	return nil, nil
+	return c.backend.nsKeeper.FindMatchingNamespaces(types.NamespacedName{
+		Namespace: c.secretMirror.Namespace,
+		Name:      c.secretMirror.Name,
+	})
 }
 
 func (c *secretMirrorContext) deleteExternalResources(ctx context.Context) error {
-	namespaces, err := c.GetDestinationNamespaces()
-	if err != nil {
-		return err
-	}
+	namespaces := c.GetDestinationNamespaces()
+
+	c.backend.nsKeeper.DeregisterNamespaceRegex(types.NamespacedName{
+		Namespace: c.secretMirror.Namespace,
+		Name:      c.secretMirror.Name,
+	})
 
 	for _, ns := range namespaces {
 		if err := c.deleteOne(ctx, types.NamespacedName{
@@ -188,6 +184,7 @@ func (c *secretMirrorContext) deleteExternalResources(ctx context.Context) error
 			return err
 		}
 	}
+
 	return nil
 }
 

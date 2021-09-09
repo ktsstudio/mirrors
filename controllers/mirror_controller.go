@@ -41,7 +41,6 @@ type MirrorReconciler struct {
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;watch;create;update;patch;delete;list
-//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;watch;list
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -90,13 +89,9 @@ func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *MirrorReconciler) Sync(ctx context.Context, mirrorContext backend.MirrorContext) error {
 	logger := log.FromContext(ctx)
 
-	namespaces, err := mirrorContext.GetDestinationNamespaces()
-	if err != nil {
-		return err
-	}
 	wg := &sync.WaitGroup{}
 	g := &errgroup.Group{}
-	for _, ns := range namespaces {
+	for _, ns := range mirrorContext.GetDestinationNamespaces() {
 		ns := ns
 		wg.Add(1)
 
