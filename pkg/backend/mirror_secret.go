@@ -51,6 +51,7 @@ func (c *secretMirrorContext) normalize() {
 
 func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedName) error {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("reconciling secret mirror %s", name))
 
 	var secretMirror mirrorsv1alpha1.SecretMirror
 	if err := c.backend.Client.Get(ctx, name, &secretMirror); err != nil {
