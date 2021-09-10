@@ -240,7 +240,7 @@ func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.Namespaced
 		doCreate = true
 	}
 
-	if c.sourceSecret.GetResourceVersion() == destSecret.GetResourceVersion() {
+	if c.sourceSecret.GetResourceVersion() == destSecret.Annotations[parentVersionAnnotation] {
 		logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s are identical",
 			c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
 		return nil
