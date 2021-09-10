@@ -63,7 +63,6 @@ type SecretMirrorStatus struct {
 //+kubebuilder:subresource:status
 
 // SecretMirror is the Schema for the secretmirrors API
-// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=`.metadata.namespace`
 // +kubebuilder:printcolumn:name="Source Name",type=string,JSONPath=`.spec.source.name`
 // +kubebuilder:printcolumn:name="Dest Namespace",type=string,JSONPath=`.spec.destination.namespace`
 // +kubebuilder:printcolumn:name="Dest Namespace Regex",type=string,JSONPath=`.spec.destination.namespaceRegex`
