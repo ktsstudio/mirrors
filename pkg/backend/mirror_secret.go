@@ -198,7 +198,7 @@ func (c *secretMirrorContext) deleteOne(ctx context.Context, name types.Namespac
 	}
 
 	correctValue := c.getManagedByMirrorValue()
-	if val, ok := secret.Annotations[managedByMirrorAnnotation]; !ok || val != correctValue {
+	if val, ok := secret.Annotations[ownedByMirrorAnnotation]; !ok || val != correctValue {
 		logger.Info(fmt.Sprintf("secret %s/%s is not managed by SecretMirror %s",
 			secret.Namespace, secret.Name, correctValue))
 		return nil
@@ -240,14 +240,16 @@ func (c *secretMirrorContext) SyncOne(ctx context.Context, dest types.Namespaced
 		doCreate = true
 	}
 
-	if !secretDiffer(c.sourceSecret, destSecret) {
+	if c.sourceSecret.GetResourceVersion() == destSecret.GetResourceVersion() {
 		logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s are identical",
 			c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
 		return nil
 	}
 
 	copySecret(c.sourceSecret, destSecret)
-	destSecret.Annotations[managedByMirrorAnnotation] = c.getManagedByMirrorValue()
+	destSecret.Annotations[ownedByMirrorAnnotation] = c.getManagedByMirrorValue()
+	destSecret.Annotations[lastSyncAnnotation] = metav1.Now().String()
+	destSecret.Annotations[parentVersionAnnotation] = c.sourceSecret.ResourceVersion
 
 	if doCreate {
 		if err := c.backend.Create(ctx, destSecret); err != nil {
@@ -282,7 +284,7 @@ func (c *secretMirrorContext) validateAnnotations(ctx context.Context, secret *v
 
 	logger := log.FromContext(ctx)
 
-	value := secret.Annotations[managedByMirrorAnnotation]
+	value := secret.Annotations[ownedByMirrorAnnotation]
 	managedByMirrorValue := c.getManagedByMirrorValue()
 
 	if value == managedByMirrorValue {
