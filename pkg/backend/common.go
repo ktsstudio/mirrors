@@ -1,14 +1,14 @@
 package backend
 
 import (
-	"errors"
 	"fmt"
 )
 
 var (
-	managedByMirrorAnnotation = "mirrors.kts.studio/owned-by"
-	errNotManagedByMirror     = errors.New("resource is not managed by the Mirror")
-	mirrorsFinalizerName      = "mirrors.kts.studio/finalizer"
+	ownedByMirrorAnnotation = "mirrors.kts.studio/owned-by"
+	lastSyncAnnotation      = "mirrors.kts.studio/last-sync-at"
+	parentVersionAnnotation = "mirrors.kts.studio/parent-version"
+	mirrorsFinalizerName    = "mirrors.kts.studio/finalizer"
 )
 
 const (
