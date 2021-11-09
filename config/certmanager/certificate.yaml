@@ -23,3 +23,5 @@ spec:
     kind: Issuer
     name: selfsigned-issuer
   secretName: webhook-server-cert # this secret will not be prefixed, since it's not managed by kustomize
+  duration: 8760h # 1y
+  renewBefore: 730h # 1m
