@@ -13,14 +13,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-mirrors-kts-studio-v1alpha1-secretmirror
+      path: /mutate-mirrors-kts-studio-v1alpha2-secretmirror
   failurePolicy: Fail
   name: msecretmirror.kb.io
   rules:
   - apiGroups:
     - mirrors.kts.studio
     apiVersions:
-    - v1alpha1
+    - v1alpha2
     operations:
     - CREATE
     - UPDATE
@@ -42,14 +42,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-mirrors-kts-studio-v1alpha1-secretmirror
+      path: /validate-mirrors-kts-studio-v1alpha2-secretmirror
   failurePolicy: Fail
   name: vsecretmirror.kb.io
   rules:
   - apiGroups:
     - mirrors.kts.studio
     apiVersions:
-    - v1alpha1
+    - v1alpha2
     operations:
     - CREATE
     - UPDATE

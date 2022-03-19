@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
+	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -48,6 +49,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(mirrorsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(mirrorsv1alpha2.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -99,6 +101,10 @@ func main() {
 
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = (&mirrorsv1alpha1.SecretMirror{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "SecretMirror")
+			os.Exit(1)
+		}
+		if err = (&mirrorsv1alpha2.SecretMirror{}).SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "SecretMirror")
 			os.Exit(1)
 		}

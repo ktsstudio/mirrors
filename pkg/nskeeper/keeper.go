@@ -13,8 +13,8 @@ import (
 )
 
 type mirrorRegex struct {
-	Name  types.NamespacedName
-	Regex *regexp.Regexp
+	Name    types.NamespacedName
+	Regexps []*regexp.Regexp
 }
 
 type NSKeeper struct {
@@ -34,7 +34,7 @@ func (k *NSKeeper) retrieveNamespaces(ctx context.Context) (*v1.NamespaceList, e
 	return namespaces, nil
 }
 
-func (k *NSKeeper) RegisterNamespaceRegex(mirror types.NamespacedName, regex *regexp.Regexp) {
+func (k *NSKeeper) RegisterNamespaceRegex(mirror types.NamespacedName, regexps []*regexp.Regexp) {
 	k.pairsMutex.Lock()
 	defer k.pairsMutex.Unlock()
 
@@ -46,8 +46,8 @@ func (k *NSKeeper) RegisterNamespaceRegex(mirror types.NamespacedName, regex *re
 	}
 
 	k.pairs[mirror.Namespace][mirror.Name] = &mirrorRegex{
-		Name:  mirror,
-		Regex: regex,
+		Name:    mirror,
+		Regexps: regexps,
 	}
 }
 
@@ -101,8 +101,10 @@ func (k *NSKeeper) FindMatchingMirrors(ns string) []types.NamespacedName {
 	var result []types.NamespacedName
 	for _, mirrors := range k.pairs {
 		for _, pair := range mirrors {
-			if pair.Regex.MatchString(ns) {
-				result = append(result, pair.Name)
+			for _, regex := range pair.Regexps {
+				if regex.MatchString(ns) {
+					result = append(result, pair.Name)
+				}
 			}
 		}
 	}
@@ -126,8 +128,10 @@ func (k *NSKeeper) FindMatchingNamespaces(mirror types.NamespacedName) []string 
 
 	var result []string
 	for ns := range k.namespaces {
-		if pair.Regex.MatchString(ns) {
-			result = append(result, ns)
+		for _, regex := range pair.Regexps {
+			if regex.MatchString(ns) {
+				result = append(result, ns)
+			}
 		}
 	}
 	return result

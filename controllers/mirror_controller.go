@@ -18,16 +18,13 @@ package controllers
 
 import (
 	"context"
-	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
+	"github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/backend"
-	"golang.org/x/sync/errgroup"
+	"github.com/ktsstudio/mirrors/pkg/silenterror"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sync"
-	"time"
 )
 
 // MirrorReconciler reconciles a SecretMirror object
@@ -52,13 +49,12 @@ type MirrorReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
 	mirrorContext, err := r.Backend.Init(ctx, req.NamespacedName)
-	if err != nil || mirrorContext == nil {
-		if err == backend.ErrSourceObjectNotFound {
-			return ctrl.Result{
-				RequeueAfter: 30 * time.Second,
-			}, nil
-		}
+	if err != nil {
+		return silenterror.ToCtrlResult(logger, err)
+	} else if mirrorContext == nil {
 		return ctrl.Result{}, err
 	}
 
@@ -72,54 +68,18 @@ func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	if mirrorContext.MirrorStatus() == "" {
-		if err := mirrorContext.SetStatusPending(ctx); err != nil {
+		if err := mirrorContext.SetStatus(ctx, v1alpha2.MirrorStatusPending); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	if err := r.Sync(ctx, mirrorContext); err != nil {
-		return ctrl.Result{Requeue: true}, err
+	if err := mirrorContext.Sync(ctx); err != nil {
+		return silenterror.ToCtrlResult(logger, err)
 	}
 
 	return ctrl.Result{
 		RequeueAfter: mirrorContext.PollPeriodDuration(),
 	}, nil
-}
-
-func (r *MirrorReconciler) Sync(ctx context.Context, mirrorContext backend.MirrorContext) error {
-	logger := log.FromContext(ctx)
-
-	wg := &sync.WaitGroup{}
-	g := &errgroup.Group{}
-	for _, ns := range mirrorContext.GetDestinationNamespaces() {
-		ns := ns
-		wg.Add(1)
-
-		if err := r.Backend.Pool().Submit(func() {
-			g.Go(func() error {
-				defer wg.Done()
-				return mirrorContext.SyncOne(ctx, types.NamespacedName{
-					Namespace: ns,
-					Name:      mirrorContext.ObjectName(),
-				})
-			})
-		}); err != nil {
-			return err
-		}
-	}
-	wg.Wait()
-
-	if err := g.Wait(); err != nil {
-		logger.Error(err, "unable to sync some objects")
-		_ = mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusError)
-		return err
-	}
-
-	if err := mirrorContext.SetStatus(ctx, mirrorsv1alpha1.MirrorStatusActive); err != nil {
-		logger.Error(err, "unable to update status")
-		return err
-	}
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
