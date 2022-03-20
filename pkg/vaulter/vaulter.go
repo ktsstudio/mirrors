@@ -69,20 +69,6 @@ func (v *Vaulter) RetrieveData(path string) (map[string]interface{}, error) {
 	return data, nil
 }
 
-func (v *Vaulter) RetrieveStringKey(path, key string) (string, error) {
-	data, err := v.RetrieveData(path)
-	if err != nil {
-		return "", err
-	}
-
-	value, ok := data[key].(string)
-	if !ok {
-		return "", fmt.Errorf("value type assertion failed: %T %#v", data[key], data[key])
-	}
-
-	return value, nil
-}
-
 func (v *Vaulter) WriteData(path string, data map[string]interface{}) error {
 	_, err := v.logical.Write(path, data)
 	if err != nil {

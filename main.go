@@ -18,6 +18,7 @@ package main
 
 import (
 	"flag"
+	"github.com/ktsstudio/mirrors/pkg/vaulter"
 	"os"
 
 	"github.com/ktsstudio/mirrors/pkg/backend"
@@ -88,9 +89,15 @@ func main() {
 	}
 
 	secretMirrorReconciler := &controllers.MirrorReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Backend: backend.MustMakeSecretMirrorBackend(mgr.GetClient(), nsKeeper),
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Backend: backend.MustMakeSecretMirrorBackend(
+			mgr.GetClient(),
+			nsKeeper,
+			func(addr string) (backend.VaultBackend, error) {
+				return vaulter.New(addr)
+			},
+		),
 	}
 	defer secretMirrorReconciler.Cleanup()
 

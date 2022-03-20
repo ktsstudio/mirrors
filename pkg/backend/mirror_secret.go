@@ -7,7 +7,6 @@ import (
 	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	"github.com/ktsstudio/mirrors/pkg/silenterror"
-	"github.com/ktsstudio/mirrors/pkg/vaulter"
 	"github.com/panjf2000/ants/v2"
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
@@ -71,7 +70,7 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	} else if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeVault {
 		var sourceSecret v1.Secret
 
-		vault, err := c.makeVaulter(ctx, &c.secretMirror.Spec.Source.Vault)
+		vault, err := c.makeVaultBackend(ctx, &c.secretMirror.Spec.Source.Vault)
 		if err != nil {
 			return err
 		}
@@ -106,7 +105,7 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	return nil
 }
 
-func (c *secretMirrorContext) vaultRetrieveSecretData(vault *vaulter.Vaulter, path string) (map[string][]byte, error) {
+func (c *secretMirrorContext) vaultRetrieveSecretData(vault VaultBackend, path string) (map[string][]byte, error) {
 	vaultData, err := vault.RetrieveData(path)
 	if err != nil {
 		return nil, err
@@ -362,7 +361,7 @@ func (c *secretMirrorContext) syncToVault(ctx context.Context) error {
 		return silenterror.Fmt("no data in source secret")
 	}
 
-	vault, err := c.makeVaulter(ctx, &c.secretMirror.Spec.Destination.Vault)
+	vault, err := c.makeVaultBackend(ctx, &c.secretMirror.Spec.Destination.Vault)
 	if err != nil {
 		return err
 	}
@@ -392,8 +391,8 @@ func (c *secretMirrorContext) syncToVault(ctx context.Context) error {
 	return nil
 }
 
-func (c *secretMirrorContext) makeVaulter(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (*vaulter.Vaulter, error) {
-	vault, err := vaulter.New(v.Addr)
+func (c *secretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (VaultBackend, error) {
+	vault, err := c.backend.vaultBackendMaker(v.Addr)
 	if err != nil {
 		return nil, err
 	}
@@ -521,26 +520,29 @@ func (c *secretMirrorContext) getManagedByMirrorValue() string {
 
 /// Backend
 
+type VaultBackendMakerFunc func(addr string) (VaultBackend, error)
 type SecretMirrorBackend struct {
 	client.Client
-	nsKeeper *nskeeper.NSKeeper
-	pool     *ants.Pool
+	nsKeeper          *nskeeper.NSKeeper
+	pool              *ants.Pool
+	vaultBackendMaker VaultBackendMakerFunc
 }
 
-func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper) (*SecretMirrorBackend, error) {
+func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper, vaultBackendMaker VaultBackendMakerFunc) (*SecretMirrorBackend, error) {
 	pool, err := ants.NewPool(DefaultWorkerPoolSize)
 	if err != nil {
 		return nil, err
 	}
 	return &SecretMirrorBackend{
-		Client:   cli,
-		nsKeeper: nsKeeper,
-		pool:     pool,
+		Client:            cli,
+		nsKeeper:          nsKeeper,
+		pool:              pool,
+		vaultBackendMaker: vaultBackendMaker,
 	}, nil
 }
 
-func MustMakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper) MirrorBackend {
-	backend, err := MakeSecretMirrorBackend(cli, nsKeeper)
+func MustMakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper, vaultBackendMaker VaultBackendMakerFunc) MirrorBackend {
+	backend, err := MakeSecretMirrorBackend(cli, nsKeeper, vaultBackendMaker)
 	if err != nil {
 		panic(err)
 	}
