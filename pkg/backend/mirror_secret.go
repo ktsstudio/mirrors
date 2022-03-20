@@ -393,7 +393,6 @@ func (c *secretMirrorContext) syncToVault(ctx context.Context) error {
 }
 
 func (c *secretMirrorContext) makeVaulter(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (*vaulter.Vaulter, error) {
-	logger := log.FromContext(ctx)
 	vault, err := vaulter.New(v.Addr)
 	if err != nil {
 		return nil, err
@@ -441,20 +440,19 @@ func (c *secretMirrorContext) makeVaulter(ctx context.Context, v *mirrorsv1alpha
 			return nil, silenterror.Fmt("secret %s for vault approle login not found", appRoleSecretName)
 		}
 
-		roleID, exists := appRoleSecret.Data[v.Auth.AppRole.RoleIdKey]
+		roleID, exists := appRoleSecret.Data[v.Auth.AppRole.RoleIDKey]
 		if !exists {
-			return nil, silenterror.Fmt("cannot find roleID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.RoleIdKey)
+			return nil, silenterror.Fmt("cannot find roleID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.RoleIDKey)
 		}
-		secretID, exists := appRoleSecret.Data[v.Auth.AppRole.SecretIdKey]
+		secretID, exists := appRoleSecret.Data[v.Auth.AppRole.SecretIDKey]
 		if !exists {
-			return nil, silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.SecretIdKey)
+			return nil, silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.SecretIDKey)
 		}
 		if err := vault.LoginAppRole(v.Auth.AppRole.AppRolePath, string(roleID), string(secretID)); err != nil {
 			return nil, err
 		}
 	}
 
-	logger.Info("successfully logged in to vault", "token", vault.Token())
 	return vault, nil
 }
 

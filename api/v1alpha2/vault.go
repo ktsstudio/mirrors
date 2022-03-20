@@ -16,8 +16,8 @@ type VaultAppRoleAuthSpec struct {
 	// +optional
 	SecretRef   v1.SecretReference `json:"secretRef,omitempty"`
 	AppRolePath string             `json:"appRolePath,omitempty"`
-	RoleIdKey   string             `json:"roleIdKey,omitempty"`
-	SecretIdKey string             `json:"secretIdKey,omitempty"`
+	RoleIDKey   string             `json:"roleIDKey,omitempty"`
+	SecretIDKey string             `json:"secretIDKey,omitempty"`
 }
 
 type VaultTokenAuthSpec struct {
@@ -46,11 +46,11 @@ func (s *VaultSpec) Default() {
 		if s.Auth.AppRole.AppRolePath == "" {
 			s.Auth.AppRole.AppRolePath = "approle"
 		}
-		if s.Auth.AppRole.RoleIdKey == "" {
-			s.Auth.AppRole.RoleIdKey = "roleID"
+		if s.Auth.AppRole.RoleIDKey == "" {
+			s.Auth.AppRole.RoleIDKey = "role-id"
 		}
-		if s.Auth.AppRole.SecretIdKey == "" {
-			s.Auth.AppRole.SecretIdKey = "secretID"
+		if s.Auth.AppRole.SecretIDKey == "" {
+			s.Auth.AppRole.SecretIDKey = "secret-id"
 		}
 	} else if s.AuthType() == VaultAuthTypeToken {
 		if s.Auth.Token.TokenKey == "" {
