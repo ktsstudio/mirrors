@@ -8,6 +8,7 @@ import (
 type Vaulter struct {
 	client  *vault.Client
 	logical *vault.Logical
+	auth    *vault.Auth
 }
 
 func New(addr string) (*Vaulter, error) {
@@ -21,6 +22,7 @@ func New(addr string) (*Vaulter, error) {
 	return &Vaulter{
 		client:  client,
 		logical: client.Logical(),
+		auth:    client.Auth(),
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
@@ -53,7 +54,6 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	c.secretMirror = &secretMirror
 	c.secretMirror.Default()
 
-	// TODO: now there are multiple ways to extract source
 	if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeSecret {
 		sourceSecretName := types.NamespacedName{
 			Namespace: c.secretMirror.Namespace,
@@ -66,6 +66,24 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 			return silenterror.FmtWithRequeue(30*time.Second, "secret %s not found, waiting to appear", sourceSecretName)
 		}
 
+		c.sourceSecret = &sourceSecret
+
+	} else if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeVault {
+		var sourceSecret v1.Secret
+
+		vault, err := c.makeVaulter(ctx, &c.secretMirror.Spec.Source.Vault)
+		if err != nil {
+			return err
+		}
+
+		data, err := c.vaultRetrieveSecretData(vault, c.secretMirror.Spec.Source.Vault.Path)
+		if err != nil {
+			return err
+		}
+
+		sourceSecret.Data = data
+		sourceSecret.Namespace = "<vault>"
+		sourceSecret.Name = c.secretMirror.Spec.Source.Vault.Path
 		c.sourceSecret = &sourceSecret
 
 	} else {
@@ -86,6 +104,32 @@ func (c *secretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	}
 
 	return nil
+}
+
+func (c *secretMirrorContext) vaultRetrieveSecretData(vault *vaulter.Vaulter, path string) (map[string][]byte, error) {
+	vaultData, err := vault.RetrieveData(path)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make(map[string][]byte, len(vaultData))
+	for k, v := range vaultData {
+		stringValue, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("vault key %s contains non-string value", k)
+		}
+		var value []byte
+		// try to decode base64 strings
+		decodedValue, err := base64.StdEncoding.DecodeString(stringValue)
+		if err == nil {
+			// indeed a base64 string
+			value = decodedValue
+		} else {
+			value = []byte(stringValue)
+		}
+		data[k] = value
+	}
+	return data, nil
 }
 
 // SetupOrRunFinalizer returns (stopReconciliation, error)
@@ -234,7 +278,15 @@ func (c *secretMirrorContext) syncOneToNamespace(ctx context.Context, dest types
 		doCreate = true
 	}
 
-	if c.sourceSecret.GetResourceVersion() == destSecret.Annotations[parentVersionAnnotation] {
+	if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeSecret {
+		if c.sourceSecret.GetResourceVersion() == destSecret.Annotations[parentVersionAnnotation] {
+			logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s have same resource version",
+				c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
+			return nil
+		}
+	}
+
+	if !secretDiffer(c.sourceSecret, destSecret) {
 		logger.Info(fmt.Sprintf("secrets %s/%s and %s/%s are identical",
 			c.sourceSecret.Namespace, c.sourceSecret.Name, destSecret.Namespace, destSecret.Name))
 		return nil
@@ -244,6 +296,10 @@ func (c *secretMirrorContext) syncOneToNamespace(ctx context.Context, dest types
 	destSecret.Annotations[ownedByMirrorAnnotation] = c.getManagedByMirrorValue()
 	destSecret.Annotations[lastSyncAnnotation] = metav1.Now().String()
 	destSecret.Annotations[parentVersionAnnotation] = c.sourceSecret.ResourceVersion
+	destSecret.Annotations[sourceTypeAnnotation] = string(c.secretMirror.Spec.Source.Type)
+	if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeVault {
+		destSecret.Annotations[vaultPathAnnotation] = c.secretMirror.Spec.Source.Vault.Path
+	}
 
 	if doCreate {
 		if err := c.backend.Create(ctx, destSecret); err != nil {
@@ -302,77 +358,29 @@ func (c *secretMirrorContext) syncToNamespaces(ctx context.Context) error {
 func (c *secretMirrorContext) syncToVault(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	vaultDest := &c.secretMirror.Spec.Destination.Vault
-	vault, err := vaulter.New(vaultDest.Addr)
-	if err != nil {
-		return err
-	}
-
-	if vaultDest.AuthType() == mirrorsv1alpha2.VaultAuthTypeToken {
-		ns := vaultDest.Auth.Token.SecretRef.Namespace
-		if ns == "" {
-			ns = c.secretMirror.Namespace
-		}
-		tokenSecretName := types.NamespacedName{
-			Name:      vaultDest.Auth.Token.SecretRef.Name,
-			Namespace: ns,
-		}
-		tokenSecret, err := c.fetchSecret(ctx, tokenSecretName)
-		if err != nil {
-			return err
-		}
-
-		if tokenSecret == nil {
-			return silenterror.Fmt("secret %s for vault token not found", tokenSecretName)
-		}
-
-		token, exists := tokenSecret.Data[vaultDest.Auth.Token.TokenKey]
-		if !exists {
-			return silenterror.Fmt("cannot find token under secret %s and key %s", tokenSecretName, vaultDest.Auth.Token.TokenKey)
-		}
-		vault.SetToken(string(token))
-
-	} else if vaultDest.AuthType() == mirrorsv1alpha2.VaultAuthTypeAppRole {
-		ns := vaultDest.Auth.AppRole.SecretRef.Namespace
-		if ns == "" {
-			ns = c.secretMirror.Namespace
-		}
-		appRoleSecretName := types.NamespacedName{
-			Name:      vaultDest.Auth.AppRole.SecretRef.Name,
-			Namespace: ns,
-		}
-		appRoleSecret, err := c.fetchSecret(ctx, appRoleSecretName)
-		if err != nil {
-			return err
-		}
-
-		if appRoleSecret == nil {
-			return silenterror.Fmt("secret %s for vault approle login not found", appRoleSecretName)
-		}
-
-		roleID, exists := appRoleSecret.Data[vaultDest.Auth.AppRole.RoleIdKey]
-		if !exists {
-			return silenterror.Fmt("cannot find roleID under secret %s and key %s", appRoleSecretName, vaultDest.Auth.AppRole.RoleIdKey)
-		}
-		secretID, exists := appRoleSecret.Data[vaultDest.Auth.AppRole.SecretIdKey]
-		if !exists {
-			return silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, vaultDest.Auth.AppRole.SecretIdKey)
-		}
-		if err := vault.LoginAppRole(vaultDest.Auth.AppRole.AppRolePath, string(roleID), string(secretID)); err != nil {
-			return err
-		}
-	}
-
-	logger.Info("successfully logged in to vault", "token", vault.Token())
-
 	if len(c.sourceSecret.Data) == 0 {
 		return silenterror.Fmt("no data in source secret")
 	}
 
-	if err := vault.WriteData(vaultDest.Path, map[string]interface{}{
+	vault, err := c.makeVaulter(ctx, &c.secretMirror.Spec.Destination.Vault)
+	if err != nil {
+		return err
+	}
+
+	vaultData, err := c.vaultRetrieveSecretData(vault, c.secretMirror.Spec.Destination.Vault.Path)
+	if err != nil {
+		return err
+	}
+
+	if !dataDiffer(c.sourceSecret.Data, vaultData) {
+		logger.Info(fmt.Sprintf("secrets %s/%s and <vault>/%s are identical",
+			c.sourceSecret.Namespace, c.sourceSecret.Name, c.secretMirror.Spec.Destination.Vault.Path))
+		return nil
+	}
+
+	if err := vault.WriteData(c.secretMirror.Spec.Destination.Vault.Path, map[string]interface{}{
 		"data": c.sourceSecret.Data,
 	}); err != nil {
-		_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusError)
 		return err
 	}
 
@@ -381,21 +389,92 @@ func (c *secretMirrorContext) syncToVault(ctx context.Context) error {
 		Name:      c.secretMirror.Name,
 	})
 
-	if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
-		logger.Error(err, "unable to update status")
-		return err
-	}
-
 	return nil
 }
 
+func (c *secretMirrorContext) makeVaulter(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (*vaulter.Vaulter, error) {
+	logger := log.FromContext(ctx)
+	vault, err := vaulter.New(v.Addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if v.AuthType() == mirrorsv1alpha2.VaultAuthTypeToken {
+		ns := v.Auth.Token.SecretRef.Namespace
+		if ns == "" {
+			ns = c.secretMirror.Namespace
+		}
+		tokenSecretName := types.NamespacedName{
+			Name:      v.Auth.Token.SecretRef.Name,
+			Namespace: ns,
+		}
+		tokenSecret, err := c.fetchSecret(ctx, tokenSecretName)
+		if err != nil {
+			return nil, err
+		}
+
+		if tokenSecret == nil {
+			return nil, silenterror.Fmt("secret %s for vault token not found", tokenSecretName)
+		}
+
+		token, exists := tokenSecret.Data[v.Auth.Token.TokenKey]
+		if !exists {
+			return nil, silenterror.Fmt("cannot find token under secret %s and key %s", tokenSecretName, v.Auth.Token.TokenKey)
+		}
+		vault.SetToken(string(token))
+
+	} else if v.AuthType() == mirrorsv1alpha2.VaultAuthTypeAppRole {
+		ns := v.Auth.AppRole.SecretRef.Namespace
+		if ns == "" {
+			ns = c.secretMirror.Namespace
+		}
+		appRoleSecretName := types.NamespacedName{
+			Name:      v.Auth.AppRole.SecretRef.Name,
+			Namespace: ns,
+		}
+		appRoleSecret, err := c.fetchSecret(ctx, appRoleSecretName)
+		if err != nil {
+			return nil, err
+		}
+
+		if appRoleSecret == nil {
+			return nil, silenterror.Fmt("secret %s for vault approle login not found", appRoleSecretName)
+		}
+
+		roleID, exists := appRoleSecret.Data[v.Auth.AppRole.RoleIdKey]
+		if !exists {
+			return nil, silenterror.Fmt("cannot find roleID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.RoleIdKey)
+		}
+		secretID, exists := appRoleSecret.Data[v.Auth.AppRole.SecretIdKey]
+		if !exists {
+			return nil, silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.SecretIdKey)
+		}
+		if err := vault.LoginAppRole(v.Auth.AppRole.AppRolePath, string(roleID), string(secretID)); err != nil {
+			return nil, err
+		}
+	}
+
+	logger.Info("successfully logged in to vault", "token", vault.Token())
+	return vault, nil
+}
+
 func (c *secretMirrorContext) Sync(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
 	if c.secretMirror.Spec.Destination.Type == mirrorsv1alpha2.DestTypeNamespaces {
 		return c.syncToNamespaces(ctx)
 	}
 
 	if c.secretMirror.Spec.Destination.Type == mirrorsv1alpha2.DestTypeVault {
-		return c.syncToVault(ctx)
+		if err := c.syncToVault(ctx); err != nil {
+			_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusError)
+			return err
+		}
+		if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
+			logger.Error(err, "unable to update status")
+			return err
+		}
+		return nil
 	}
 
 	return fmt.Errorf("unknown destination type: %s", c.secretMirror.Spec.Destination.Type)

@@ -51,6 +51,10 @@ func (r *SecretMirror) Default() {
 		r.Spec.Source.Type = SourceTypeSecret
 	}
 
+	if r.Spec.Source.Type == SourceTypeVault {
+		r.Spec.Source.Vault.Default()
+	}
+
 	if r.Spec.Source.Name == "" {
 		r.Spec.Source.Name = r.Name
 	}

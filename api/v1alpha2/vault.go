@@ -29,7 +29,7 @@ type VaultTokenAuthSpec struct {
 
 type VaultAuthSpec struct {
 	// +optional
-	AppRole VaultAppRoleAuthSpec `json:"appRole,omitempty"`
+	AppRole VaultAppRoleAuthSpec `json:"approle,omitempty"`
 	// +optional
 	Token VaultTokenAuthSpec `json:"token,omitempty"`
 }
@@ -47,10 +47,10 @@ func (s *VaultSpec) Default() {
 			s.Auth.AppRole.AppRolePath = "approle"
 		}
 		if s.Auth.AppRole.RoleIdKey == "" {
-			s.Auth.AppRole.RoleIdKey = "roleId"
+			s.Auth.AppRole.RoleIdKey = "roleID"
 		}
 		if s.Auth.AppRole.SecretIdKey == "" {
-			s.Auth.AppRole.SecretIdKey = "secretId"
+			s.Auth.AppRole.SecretIdKey = "secretID"
 		}
 	} else if s.AuthType() == VaultAuthTypeToken {
 		if s.Auth.Token.TokenKey == "" {

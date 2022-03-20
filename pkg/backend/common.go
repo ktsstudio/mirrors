@@ -8,6 +8,8 @@ var (
 	ownedByMirrorAnnotation = "mirrors.kts.studio/owned-by"
 	lastSyncAnnotation      = "mirrors.kts.studio/last-sync-at"
 	parentVersionAnnotation = "mirrors.kts.studio/parent-version"
+	sourceTypeAnnotation    = "mirrors.kts.studio/source-type"
+	vaultPathAnnotation     = "mirrors.kts.studio/vault-path"
 	mirrorsFinalizerName    = "mirrors.kts.studio/finalizer"
 )
 
