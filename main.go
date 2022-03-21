@@ -88,16 +88,23 @@ func main() {
 		Client: mgr.GetClient(),
 	}
 
+	secretMirrorBackend, err := backend.MakeSecretMirrorBackend(
+		mgr.GetClient(),
+		nsKeeper,
+		func(addr string) (backend.VaultBackend, error) {
+			return vaulter.New(addr)
+		},
+	)
+
+	if err != nil {
+		setupLog.Error(err, "unable to create secret mirror backend")
+		os.Exit(1)
+	}
+
 	secretMirrorReconciler := &controllers.MirrorReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Backend: backend.MustMakeSecretMirrorBackend(
-			mgr.GetClient(),
-			nsKeeper,
-			func(addr string) (backend.VaultBackend, error) {
-				return vaulter.New(addr)
-			},
-		),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Backend: secretMirrorBackend,
 	}
 	defer secretMirrorReconciler.Cleanup()
 

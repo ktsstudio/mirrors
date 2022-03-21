@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 	"github.com/ktsstudio/mirrors/api/v1alpha2"
-	"github.com/ktsstudio/mirrors/pkg/backend"
 	"github.com/ktsstudio/mirrors/pkg/silenterror"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,7 +30,7 @@ import (
 type MirrorReconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
-	Backend backend.MirrorBackend
+	Backend SecretMirrorBackend
 }
 
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors,verbs=get;list;watch;create;update;patch;delete
