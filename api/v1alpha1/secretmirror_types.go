@@ -55,6 +55,7 @@ type SecretMirrorStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +kubebuilder:default:=Pending
+	// +kubebuilder:validation:Enum=Pending;Active;Error
 	MirrorStatus MirrorStatus `json:"mirrorStatus,omitempty"`
 	LastSyncTime metav1.Time  `json:"lastSyncTime,omitempty"`
 }

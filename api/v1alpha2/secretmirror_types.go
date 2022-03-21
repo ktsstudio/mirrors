@@ -44,6 +44,7 @@ const (
 
 type SecretMirrorSource struct {
 	// +kubebuilder:default:=secret
+	// +kubebuilder:validation:Enum=secret;vault
 	Type SourceType `json:"type,omitempty"`
 
 	// +kubebuilder:validation:Required
@@ -54,6 +55,7 @@ type SecretMirrorSource struct {
 
 type SecretMirrorDestination struct {
 	// +kubebuilder:default:=namespaces
+	// +kubebuilder:validation:Enum=namespaces;vault
 	Type       DestType `json:"type,omitempty"`
 	Namespaces []string `json:"namespaces,omitempty"`
 	// +optional
@@ -73,10 +75,12 @@ type SecretMirrorSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +kubebuilder:validation:Required
-	Source            SecretMirrorSource      `json:"source,omitempty"`
-	Destination       SecretMirrorDestination `json:"destination,omitempty"`
-	DeletePolicy      DeletePolicyType        `json:"deletePolicy,omitempty"`
-	PollPeriodSeconds int64                   `json:"pollPeriodSeconds,omitempty"`
+	Source      SecretMirrorSource      `json:"source,omitempty"`
+	Destination SecretMirrorDestination `json:"destination,omitempty"`
+
+	// +kubebuilder:validation:Enum=delete;retain
+	DeletePolicy      DeletePolicyType `json:"deletePolicy,omitempty"`
+	PollPeriodSeconds int64            `json:"pollPeriodSeconds,omitempty"`
 }
 
 // SecretMirrorStatus defines the observed state of SecretMirror
@@ -85,6 +89,7 @@ type SecretMirrorStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// +kubebuilder:default:=Pending
+	// +kubebuilder:validation:Enum=Pending;Active;Error
 	MirrorStatus MirrorStatus `json:"mirrorStatus,omitempty"`
 	LastSyncTime metav1.Time  `json:"lastSyncTime,omitempty"`
 }
