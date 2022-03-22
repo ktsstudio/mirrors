@@ -29,8 +29,9 @@ var (
 type SecretMirrorContext struct {
 	backend *SecretMirrorBackend
 
-	secretMirror *mirrorsv1alpha2.SecretMirror
-	sourceSecret *v1.Secret
+	secretMirror     *mirrorsv1alpha2.SecretMirror
+	secretMirrorName types.NamespacedName
+	sourceSecret     *v1.Secret
 }
 
 func (c *SecretMirrorContext) MirrorStatus() mirrorsv1alpha2.MirrorStatus {
@@ -51,6 +52,7 @@ func (c *SecretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	}
 
 	c.secretMirror = &secretMirror
+	c.secretMirrorName = name
 	c.secretMirror.Default()
 
 	if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeSecret {
@@ -392,10 +394,7 @@ func (c *SecretMirrorContext) syncToVault(ctx context.Context) error {
 }
 
 func (c *SecretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (VaultBackend, error) {
-	vault, err := c.backend.vaultBackendMaker(v.Addr)
-	if err != nil {
-		return nil, err
-	}
+	var vault VaultBackend
 
 	if v.AuthType() == mirrorsv1alpha2.VaultAuthTypeToken {
 		ns := v.Auth.Token.SecretRef.Namespace
@@ -415,11 +414,18 @@ func (c *SecretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1
 			return nil, silenterror.Fmt("secret %s for vault token not found", tokenSecretName)
 		}
 
-		token, exists := tokenSecret.Data[v.Auth.Token.TokenKey]
+		rawToken, exists := tokenSecret.Data[v.Auth.Token.TokenKey]
 		if !exists {
 			return nil, silenterror.Fmt("cannot find token under secret %s and key %s", tokenSecretName, v.Auth.Token.TokenKey)
 		}
-		vault.SetToken(string(token))
+		token := string(rawToken)
+
+		vault, err = c.backend.vaultMulti.EnsureAndLogin(c.secretMirror, mirrorVaultInfo{
+			secret:   tokenSecretName,
+			addr:     v.Addr,
+			authType: v.AuthType(),
+			token:    token,
+		})
 
 	} else if v.AuthType() == mirrorsv1alpha2.VaultAuthTypeAppRole {
 		ns := v.Auth.AppRole.SecretRef.Namespace
@@ -439,17 +445,34 @@ func (c *SecretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1
 			return nil, silenterror.Fmt("secret %s for vault approle login not found", appRoleSecretName)
 		}
 
-		roleID, exists := appRoleSecret.Data[v.Auth.AppRole.RoleIDKey]
+		rawRoleID, exists := appRoleSecret.Data[v.Auth.AppRole.RoleIDKey]
 		if !exists {
 			return nil, silenterror.Fmt("cannot find roleID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.RoleIDKey)
 		}
-		secretID, exists := appRoleSecret.Data[v.Auth.AppRole.SecretIDKey]
+		rawSecretID, exists := appRoleSecret.Data[v.Auth.AppRole.SecretIDKey]
 		if !exists {
 			return nil, silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.SecretIDKey)
 		}
-		if err := vault.LoginAppRole(v.Auth.AppRole.AppRolePath, string(roleID), string(secretID)); err != nil {
+
+		roleID := string(rawRoleID)
+		secretID := string(rawSecretID)
+
+		vault, err = c.backend.vaultMulti.EnsureAndLogin(c.secretMirror, mirrorVaultInfo{
+			secret:          appRoleSecretName,
+			addr:            v.Addr,
+			authType:        v.AuthType(),
+			appRolePath:     v.Auth.AppRole.AppRolePath,
+			appRoleId:       roleID,
+			appRoleSecretId: secretID,
+		})
+
+		if err != nil {
 			return nil, err
 		}
+	}
+
+	if vault == nil {
+		return nil, fmt.Errorf("unsupported auth type: %s", v.AuthType())
 	}
 
 	return vault, nil
@@ -520,12 +543,11 @@ func (c *SecretMirrorContext) getManagedByMirrorValue() string {
 
 /// Backend
 
-type VaultBackendMakerFunc func(addr string) (VaultBackend, error)
 type SecretMirrorBackend struct {
 	client.Client
-	nsKeeper          *nskeeper.NSKeeper
-	pool              *ants.Pool
-	vaultBackendMaker VaultBackendMakerFunc
+	nsKeeper   *nskeeper.NSKeeper
+	pool       *ants.Pool
+	vaultMulti *MultiVault
 }
 
 func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper, vaultBackendMaker VaultBackendMakerFunc) (*SecretMirrorBackend, error) {
@@ -534,10 +556,10 @@ func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper, vau
 		return nil, err
 	}
 	return &SecretMirrorBackend{
-		Client:            cli,
-		nsKeeper:          nsKeeper,
-		pool:              pool,
-		vaultBackendMaker: vaultBackendMaker,
+		Client:     cli,
+		nsKeeper:   nsKeeper,
+		pool:       pool,
+		vaultMulti: NewMultiVault(vaultBackendMaker),
 	}, nil
 }
 
