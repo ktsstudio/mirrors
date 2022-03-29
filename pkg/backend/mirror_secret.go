@@ -12,6 +12,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"regexp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,6 +63,9 @@ func (c *SecretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 		var sourceSecret v1.Secret
 		if err := c.backend.Get(ctx, sourceSecretName, &sourceSecret); err != nil {
 			_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusPending)
+			c.backend.Recorder.Eventf(c.secretMirror, "Warning", "NoSecret",
+				"Secret %s not found, waiting to appear", sourceSecretName,
+			)
 			return silenterror.FmtWithRequeue(30*time.Second, "secret %s not found, waiting to appear", sourceSecretName)
 		}
 
@@ -70,7 +74,7 @@ func (c *SecretMirrorContext) Init(ctx context.Context, name types.NamespacedNam
 	} else if c.secretMirror.Spec.Source.Type == mirrorsv1alpha2.SourceTypeVault {
 		var sourceSecret v1.Secret
 
-		vault, err := c.makeVaultBackend(ctx, &c.secretMirror.Spec.Source.Vault)
+		vault, err := c.makeVaultBackend(ctx, c.secretMirror.Spec.Source.Vault)
 		if err != nil {
 			return err
 		}
@@ -343,9 +347,16 @@ func (c *SecretMirrorContext) syncToNamespaces(ctx context.Context) error {
 
 	if err := g.Wait(); err != nil {
 		logger.Error(err, "unable to sync some objects")
+		c.backend.Recorder.Eventf(c.secretMirror, "Warning", "Error",
+			"Unable to sync some objects: %s", err,
+		)
 		_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusError)
 		return err
 	}
+
+	c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
+		"Synced secret %s/%s to namespaces", c.sourceSecret.Namespace, c.sourceSecret.Name,
+	)
 
 	if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
 		logger.Error(err, "unable to update status")
@@ -361,13 +372,19 @@ func (c *SecretMirrorContext) syncToVault(ctx context.Context) error {
 		return silenterror.Fmt("no data in source secret")
 	}
 
-	vault, err := c.makeVaultBackend(ctx, &c.secretMirror.Spec.Destination.Vault)
+	vault, err := c.makeVaultBackend(ctx, c.secretMirror.Spec.Destination.Vault)
 	if err != nil {
+		c.backend.Recorder.Eventf(c.secretMirror, "Warning", "VaultError",
+			"Error setting up vault: %s", err,
+		)
 		return err
 	}
 
 	vaultData, err := c.vaultRetrieveSecretData(vault, c.secretMirror.Spec.Destination.Vault.Path)
 	if err != nil {
+		c.backend.Recorder.Eventf(c.secretMirror, "Warning", "VaultError",
+			"Error retrieving secret from vault: %s", err,
+		)
 		return err
 	}
 
@@ -380,6 +397,9 @@ func (c *SecretMirrorContext) syncToVault(ctx context.Context) error {
 	if err := vault.WriteData(c.secretMirror.Spec.Destination.Vault.Path, map[string]interface{}{
 		"data": c.sourceSecret.Data,
 	}); err != nil {
+		c.backend.Recorder.Eventf(c.secretMirror, "Warning", "VaultError",
+			"Error syncing to vault: %s", err,
+		)
 		return err
 	}
 
@@ -392,6 +412,8 @@ func (c *SecretMirrorContext) syncToVault(ctx context.Context) error {
 }
 
 func (c *SecretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1alpha2.VaultSpec) (VaultBackend, error) {
+	logger := log.FromContext(ctx)
+
 	vault, err := c.backend.vaultBackendMaker(v.Addr)
 	if err != nil {
 		return nil, err
@@ -448,9 +470,11 @@ func (c *SecretMirrorContext) makeVaultBackend(ctx context.Context, v *mirrorsv1
 			return nil, silenterror.Fmt("cannot find secretID under secret %s and key %s", appRoleSecretName, v.Auth.AppRole.SecretIDKey)
 		}
 		if err := vault.LoginAppRole(v.Auth.AppRole.AppRolePath, string(roleID), string(secretID)); err != nil {
-			return nil, err
+			return nil, silenterror.Fmt("error logging in to vault via approle: %s", err)
 		}
 	}
+
+	logger.Info("successfully logged in to vault", "addr", v.Addr, "authType", v.AuthType())
 
 	return vault, nil
 }
@@ -467,6 +491,9 @@ func (c *SecretMirrorContext) Sync(ctx context.Context) error {
 			_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusError)
 			return err
 		}
+		c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
+			"Synced secret %s/%s to vault", c.sourceSecret.Namespace, c.sourceSecret.Name,
+		)
 		if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
 			logger.Error(err, "unable to update status")
 			return err
@@ -526,15 +553,17 @@ type SecretMirrorBackend struct {
 	nsKeeper          *nskeeper.NSKeeper
 	pool              *ants.Pool
 	vaultBackendMaker VaultBackendMakerFunc
+	Recorder          record.EventRecorder
 }
 
-func MakeSecretMirrorBackend(cli client.Client, nsKeeper *nskeeper.NSKeeper, vaultBackendMaker VaultBackendMakerFunc) (*SecretMirrorBackend, error) {
+func MakeSecretMirrorBackend(cli client.Client, recorder record.EventRecorder, nsKeeper *nskeeper.NSKeeper, vaultBackendMaker VaultBackendMakerFunc) (*SecretMirrorBackend, error) {
 	pool, err := ants.NewPool(DefaultWorkerPoolSize)
 	if err != nil {
 		return nil, err
 	}
 	return &SecretMirrorBackend{
 		Client:            cli,
+		Recorder:          recorder,
 		nsKeeper:          nsKeeper,
 		pool:              pool,
 		vaultBackendMaker: vaultBackendMaker,

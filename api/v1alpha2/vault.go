@@ -29,9 +29,9 @@ type VaultTokenAuthSpec struct {
 
 type VaultAuthSpec struct {
 	// +optional
-	AppRole VaultAppRoleAuthSpec `json:"approle,omitempty"`
+	AppRole *VaultAppRoleAuthSpec `json:"approle,omitempty"`
 	// +optional
-	Token VaultTokenAuthSpec `json:"token,omitempty"`
+	Token *VaultTokenAuthSpec `json:"token,omitempty"`
 }
 
 type VaultSpec struct {

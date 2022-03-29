@@ -50,16 +50,17 @@ type SecretMirrorSource struct {
 	// +kubebuilder:validation:Required
 	Name string `json:"name,omitempty"`
 	// +optional
-	Vault VaultSpec `json:"vault,omitempty"`
+	Vault *VaultSpec `json:"vault,omitempty"`
 }
 
 type SecretMirrorDestination struct {
 	// +kubebuilder:default:=namespaces
 	// +kubebuilder:validation:Enum=namespaces;vault
-	Type       DestType `json:"type,omitempty"`
+	Type DestType `json:"type,omitempty"`
+	// +optional
 	Namespaces []string `json:"namespaces,omitempty"`
 	// +optional
-	Vault VaultSpec `json:"vault,omitempty"`
+	Vault *VaultSpec `json:"vault,omitempty"`
 }
 
 type MirrorStatus string

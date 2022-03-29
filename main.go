@@ -90,6 +90,7 @@ func main() {
 
 	secretMirrorBackend, err := backend.MakeSecretMirrorBackend(
 		mgr.GetClient(),
+		mgr.GetEventRecorderFor("mirrors.kts.studio"),
 		nsKeeper,
 		func(addr string) (backend.VaultBackend, error) {
 			return vaulter.New(addr)
@@ -102,9 +103,10 @@ func main() {
 	}
 
 	secretMirrorReconciler := &controllers.MirrorReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Backend: secretMirrorBackend,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Backend:  secretMirrorBackend,
+		Recorder: secretMirrorBackend.Recorder,
 	}
 	defer secretMirrorReconciler.Cleanup()
 

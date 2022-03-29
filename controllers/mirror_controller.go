@@ -21,6 +21,7 @@ import (
 	"github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/silenterror"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -29,8 +30,9 @@ import (
 // MirrorReconciler reconciles a SecretMirror object
 type MirrorReconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Backend SecretMirrorBackend
+	Scheme   *runtime.Scheme
+	Backend  SecretMirrorBackend
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors,verbs=get;list;watch;create;update;patch;delete
