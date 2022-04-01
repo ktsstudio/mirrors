@@ -164,7 +164,7 @@ In order to install `mirrors` controller you need to execute the following:
 git clone https://github.com/ktsstudio/mirrors
 cd mirrors
 cd config/default
-kustomize edit set image controller=ktshub/mirrors:0.2.0
+kustomize edit set image controller=ktshub/mirrors:0.2.1
 kustomize build . | kubectl apply -f -
 ```
 
