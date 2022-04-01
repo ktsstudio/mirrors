@@ -14,6 +14,10 @@ It means that the following scenarios are possible using `mirrors` for automatic
 
 All these scenarios unlock possibilities to mirror any given secret to and from one or many Kubernetes clusters.
 
+## CRD Overview
+
+`SecretMirror` available fields are documented [here](https://doc.crds.dev/github.com/ktsstudio/mirrors/mirrors.kts.studio/SecretMirror/v1alpha2). 
+
 ## Quick example
 
 Let's say we have a following Kubernetes secret:
