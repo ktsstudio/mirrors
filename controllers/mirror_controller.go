@@ -39,6 +39,7 @@ type MirrorReconciler struct {
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;watch;create;update;patch;delete;list
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
