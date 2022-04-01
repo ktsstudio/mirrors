@@ -354,9 +354,11 @@ func (c *SecretMirrorContext) syncToNamespaces(ctx context.Context) error {
 		return err
 	}
 
-	c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
-		"Synced secret %s/%s to namespaces", c.sourceSecret.Namespace, c.sourceSecret.Name,
-	)
+	if c.secretMirror.Status.MirrorStatus != mirrorsv1alpha2.MirrorStatusActive {
+		c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
+			"Synced secret %s/%s to namespaces", c.sourceSecret.Namespace, c.sourceSecret.Name,
+		)
+	}
 
 	if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
 		logger.Error(err, "unable to update status")
@@ -491,9 +493,11 @@ func (c *SecretMirrorContext) Sync(ctx context.Context) error {
 			_ = c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusError)
 			return err
 		}
-		c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
-			"Synced secret %s/%s to vault", c.sourceSecret.Namespace, c.sourceSecret.Name,
-		)
+		if c.secretMirror.Status.MirrorStatus != mirrorsv1alpha2.MirrorStatusActive {
+			c.backend.Recorder.Eventf(c.secretMirror, "Normal", "Synced",
+				"Synced secret %s/%s to vault", c.sourceSecret.Namespace, c.sourceSecret.Name,
+			)
+		}
 		if err := c.SetStatus(ctx, mirrorsv1alpha2.MirrorStatusActive); err != nil {
 			logger.Error(err, "unable to update status")
 			return err
