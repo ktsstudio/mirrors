@@ -9,6 +9,7 @@ type Vaulter struct {
 	client  *vault.Client
 	logical *vault.Logical
 	auth    *vault.Auth
+	sys     *vault.Sys
 }
 
 func New(addr string) (*Vaulter, error) {
@@ -23,6 +24,7 @@ func New(addr string) (*Vaulter, error) {
 		client:  client,
 		logical: client.Logical(),
 		auth:    client.Auth(),
+		sys:     client.Sys(),
 	}, nil
 }
 
@@ -45,6 +47,10 @@ func (v *Vaulter) LoginAppRole(appRolePath, roleID, secretID string) error {
 	}
 	v.SetToken(resp.Auth.ClientToken)
 	return nil
+}
+
+func (v *Vaulter) ReadSecret(path string) (*vault.Secret, error) {
+	return v.logical.Read(path)
 }
 
 func (v *Vaulter) RetrieveData(path string) (map[string]interface{}, error) {
@@ -75,4 +81,8 @@ func (v *Vaulter) WriteData(path string, data map[string]interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func (v *Vaulter) RenewLease(leaseId string, increment int) (*vault.Secret, error) {
+	return v.sys.Renew(leaseId, increment)
 }

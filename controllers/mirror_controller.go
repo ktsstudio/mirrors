@@ -18,21 +18,25 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"github.com/ktsstudio/mirrors/api/v1alpha2"
-	"github.com/ktsstudio/mirrors/pkg/silenterror"
+	"github.com/ktsstudio/mirrors/pkg/backend"
+	"github.com/ktsstudio/mirrors/pkg/reconresult"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"time"
 )
 
 // MirrorReconciler reconciles a SecretMirror object
 type MirrorReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Backend  SecretMirrorBackend
 	Recorder record.EventRecorder
+	Backend  SecretMirrorBackend
 }
 
 //+kubebuilder:rbac:groups=mirrors.kts.studio,resources=secretmirrors,verbs=get;list;watch;create;update;patch;delete
@@ -51,37 +55,15 @@ type MirrorReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *MirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
 	mirrorContext, err := r.Backend.Init(ctx, req.NamespacedName)
 	if err != nil {
-		return silenterror.ToCtrlResult(logger, err)
-	} else if mirrorContext == nil {
 		return ctrl.Result{}, err
 	}
-
-	stopReconcile, err := mirrorContext.SetupOrRunFinalizer(ctx)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if stopReconcile {
+	if mirrorContext == nil {
 		return ctrl.Result{}, nil
 	}
 
-	if mirrorContext.MirrorStatus() == "" {
-		if err := mirrorContext.SetStatus(ctx, v1alpha2.MirrorStatusPending); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	if err := mirrorContext.Sync(ctx); err != nil {
-		return silenterror.ToCtrlResult(logger, err)
-	}
-
-	return ctrl.Result{
-		RequeueAfter: mirrorContext.PollPeriodDuration(),
-	}, nil
+	return r.handleReconcileResult(ctx, mirrorContext, mirrorContext.Sync(ctx))
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -95,4 +77,42 @@ func (r *MirrorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func (r *MirrorReconciler) Cleanup() {
 	r.Backend.Cleanup()
+}
+
+func (r *MirrorReconciler) handleReconcileResult(ctx context.Context, mirrorCtx *backend.SecretMirrorContext, err error) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var status v1alpha2.MirrorStatus
+	var requeueAfter time.Duration
+	if err != nil {
+		if res, ok := err.(*reconresult.ReconcileResult); ok {
+			logger.Info(res.Message)
+
+			status = res.Status
+			requeueAfter = res.RequeueAfter
+
+			if res.EventType != "" && res.EventReason != "" {
+				r.Recorder.Event(mirrorCtx.SecretMirror, res.EventType, res.EventReason, res.Message)
+			}
+		} else {
+			requeueAfter = reconresult.DefaultRequeueAfter
+			status = v1alpha2.MirrorStatusError
+		}
+	} else {
+		status = v1alpha2.MirrorStatusActive
+		if mirrorCtx.SecretMirror.Status.MirrorStatus != v1alpha2.MirrorStatusActive {
+			r.Recorder.Event(mirrorCtx.SecretMirror, v1.EventTypeNormal, "Active", "SecretMirror is synced")
+		}
+		requeueAfter = mirrorCtx.SecretMirror.PollPeriodDuration()
+	}
+
+	if status != "" {
+		if err := mirrorCtx.SetStatus(ctx, status); err != nil {
+			logger.Error(err, fmt.Sprintf("Error setting status to %s", status))
+		}
+	}
+
+	return ctrl.Result{
+		RequeueAfter: requeueAfter,
+	}, nil
 }

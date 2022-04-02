@@ -52,7 +52,7 @@ func (r *SecretMirror) Default() {
 	}
 
 	if r.Spec.Source.Type == SourceTypeVault {
-		r.Spec.Source.Vault.Default()
+		r.Spec.Source.Vault.Default(r.Namespace)
 	}
 
 	if r.Spec.Source.Name == "" {
@@ -68,7 +68,7 @@ func (r *SecretMirror) Default() {
 	}
 
 	if r.Spec.Destination.Type == DestTypeVault {
-		r.Spec.Destination.Vault.Default()
+		r.Spec.Destination.Vault.Default(r.Namespace)
 		r.Spec.DeletePolicy = DeletePolicyRetain
 	}
 }

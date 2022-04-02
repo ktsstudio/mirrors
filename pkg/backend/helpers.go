@@ -2,7 +2,10 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func dataDiffer(src, dest map[string][]byte) bool {
@@ -60,4 +63,12 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func fetchSecret(ctx context.Context, cli client.Client, name types.NamespacedName) (*v1.Secret, error) {
+	var secret v1.Secret
+	if err := cli.Get(ctx, name, &secret); err != nil {
+		return nil, client.IgnoreNotFound(err)
+	}
+	return &secret, nil
 }
