@@ -161,6 +161,10 @@ spec:
 
 It is required to specify `source.name` as it will be the future name of Kuberentes secrets created in the cluster.
 
+## More examples
+
+More examples can be found at `config/samples` folder.
+
 ## Install
 
 In order to install `mirrors` controller you need to execute the following:
