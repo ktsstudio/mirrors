@@ -164,14 +164,19 @@ It is required to specify `source.name` as it will be the future name of Kuberen
 ## Install
 
 In order to install `mirrors` controller you need to execute the following:
+
+```shell
+helm repo add kts https://charts.kts.studio
+helm repo update
+
+helm upgrade --install mirrors kts/mirrors
+```
+
+Or using built-in kustomize deployment:
 ```bash
 git clone https://github.com/ktsstudio/mirrors
 cd mirrors
 cd config/default
-kustomize edit set image controller=ktshub/mirrors:0.2.2
+kustomize edit set image controller=ktshub/mirrors:0.2.3
 kustomize build . | kubectl apply -f -
 ```
-
-_Helm package is on the way..._
-
-

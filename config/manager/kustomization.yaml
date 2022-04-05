@@ -13,4 +13,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ktshub/mirrors
-  newTag: 0.2.2
+  newTag: 0.2.3
