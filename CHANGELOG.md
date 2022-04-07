@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.5
+* Fixed bug with retaining secrets
+
 ## 0.2.4
 * Added metrics
 * Fixed some reconciling bugs

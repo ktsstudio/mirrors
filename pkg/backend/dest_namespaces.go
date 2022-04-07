@@ -230,13 +230,13 @@ func (d *NamespacesDest) deleteOneSecret(ctx context.Context, name types.Namespa
 			return nil
 		}
 
+		if err := d.Delete(ctx, &secret); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+
 		logger.Info(fmt.Sprintf("deleted secret %s/%s", secret.Namespace, secret.Name))
 	} else {
 		logger.Info(fmt.Sprintf("retaining secret %s/%s", secret.Namespace, secret.Name))
-	}
-
-	if err := d.Delete(ctx, &secret); err != nil {
-		return client.IgnoreNotFound(err)
 	}
 
 	return nil
