@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -21,4 +22,8 @@ const (
 
 func getManagedByMirrorValue(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func getPrettyName(obj client.Object) string {
+	return fmt.Sprintf("%s/%s", obj.GetNamespace(), obj.GetName())
 }

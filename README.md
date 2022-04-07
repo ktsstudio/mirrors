@@ -184,3 +184,15 @@ cd config/default
 kustomize edit set image controller=ktshub/mirrors:0.2.3
 kustomize build . | kubectl apply -f -
 ```
+
+## Exposed metrics
+
+The following specific mirrors metrics are exposed:
+
+| metric                                  | description                                                           |
+|-----------------------------------------|-----------------------------------------------------------------------|
+| `mirrors_sync_total`                    | Number of successful mirror syncs                                     |
+| `mirrors_ns_current_count`              | Number of namespaces to which a secret has been successfully mirrored |
+| `mirrors_vault_lease_renew_ok_total`    | Number of successful lease renewals                                   |
+| `mirrors_vault_lease_renew_error_total` | Number of errored lease renewals                                      |
+

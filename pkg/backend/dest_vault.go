@@ -18,6 +18,11 @@ type VaultSecretDest struct {
 	vault  VaultBackend
 }
 
+func (d *VaultSecretDest) Setup(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
 func (d *VaultSecretDest) Sync(ctx context.Context, secret *v1.Secret) error {
 	logger := log.FromContext(ctx)
 

@@ -84,9 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	nsKeeper := &nskeeper.NSKeeper{
-		Client: mgr.GetClient(),
-	}
+	nsKeeper := nskeeper.MakeNSKeeper(mgr.GetClient())
 
 	secretMirrorBackend, err := backend.MakeSecretMirrorBackend(
 		mgr.GetClient(),

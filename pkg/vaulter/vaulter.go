@@ -28,6 +28,10 @@ func New(addr string) (*Vaulter, error) {
 	}, nil
 }
 
+func (v *Vaulter) Addr() string {
+	return v.client.Address()
+}
+
 func (v *Vaulter) Token() string {
 	return v.client.Token()
 }

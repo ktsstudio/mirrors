@@ -14,6 +14,7 @@ import (
 )
 
 type VaultBackend interface {
+	Addr() string
 	Token() string
 	SetToken(token string)
 	LoginAppRole(appRolePath, roleID, secretID string) error

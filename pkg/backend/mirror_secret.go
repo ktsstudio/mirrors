@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
+	"github.com/ktsstudio/mirrors/pkg/metrics"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	"github.com/ktsstudio/mirrors/pkg/reconresult"
 	"github.com/panjf2000/ants/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -108,20 +110,31 @@ func (c *SecretMirrorContext) Sync(ctx context.Context) error {
 		}
 	}
 
-	nextSyncAt := c.SecretMirror.Status.LastSyncTime.Add(c.SecretMirror.PollPeriodDuration())
-	if time.Now().Before(nextSyncAt) {
-		return &reconresult.ReconcileResult{
-			Message: fmt.Sprintf("no need to sync. next sync at %s", nextSyncAt),
-		}
-	}
-
 	sourceRetriever, err := c.makeSourceRetriever(ctx)
 	if err != nil {
 		return err
 	}
+	if err := sourceRetriever.Setup(ctx); err != nil {
+		return err
+	}
+
 	destSyncer, err := c.makeDestSyncer(ctx)
 	if err != nil {
 		return err
+	}
+
+	if err := destSyncer.Setup(ctx); err != nil {
+		return err
+	}
+
+	// only check after we have set up everything (e.g. registered namespaces in nsKeeper)
+	now := time.Now()
+	nextSyncAt := c.SecretMirror.Status.LastSyncTime.Time.Add(c.SecretMirror.PollPeriodDuration())
+	if now.Before(nextSyncAt) {
+		return &reconresult.ReconcileResult{
+			Message:      fmt.Sprintf("no need to sync. next sync at %s", nextSyncAt),
+			RequeueAfter: nextSyncAt.Sub(now),
+		}
 	}
 
 	sourceSecret, err := sourceRetriever.Retrieve(ctx)
@@ -129,7 +142,17 @@ func (c *SecretMirrorContext) Sync(ctx context.Context) error {
 		return err
 	}
 
-	return destSyncer.Sync(ctx, sourceSecret)
+	if err := destSyncer.Sync(ctx, sourceSecret); err != nil {
+		return err
+	}
+
+	metrics.MirrorSyncCount.With(prometheus.Labels{
+		"mirror":           getPrettyName(c.SecretMirror),
+		"source_type":      string(c.SecretMirror.Spec.Source.Type),
+		"destination_type": string(c.SecretMirror.Spec.Destination.Type),
+	}).Inc()
+
+	return nil
 }
 
 func (c *SecretMirrorContext) makeSourceRetriever(ctx context.Context) (SourceRetriever, error) {

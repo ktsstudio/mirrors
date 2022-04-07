@@ -90,6 +90,9 @@ func (r *MirrorReconciler) handleReconcileResult(ctx context.Context, mirrorCtx 
 
 			status = res.Status
 			requeueAfter = res.RequeueAfter
+			if requeueAfter == 0 {
+				requeueAfter = mirrorCtx.SecretMirror.PollPeriodDuration()
+			}
 
 			if res.EventType != "" && res.EventReason != "" {
 				r.Recorder.Event(mirrorCtx.SecretMirror, res.EventType, res.EventReason, res.Message)

@@ -23,6 +23,14 @@ type NSKeeper struct {
 	namespaces      map[string]struct{}
 	pairsMutex      sync.RWMutex
 	namespacesMutex sync.RWMutex
+	initChan        chan struct{}
+}
+
+func MakeNSKeeper(cli client.Client) *NSKeeper {
+	return &NSKeeper{
+		Client:   cli,
+		initChan: make(chan struct{}, 1),
+	}
 }
 
 func (k *NSKeeper) retrieveNamespaces(ctx context.Context) (*v1.NamespaceList, error) {
@@ -68,20 +76,21 @@ func (k *NSKeeper) DeregisterNamespaceRegex(mirror types.NamespacedName) {
 	delete(k.pairs[mirror.Namespace], mirror.Name)
 }
 
-func (k *NSKeeper) AddNamespace(ns string) {
+func (k *NSKeeper) AddNamespace(ns string) (isNew bool) {
 	k.namespacesMutex.Lock()
 	defer k.namespacesMutex.Unlock()
-	k.addNamespace(ns)
+	return k.addNamespace(ns)
 }
 
-func (k *NSKeeper) addNamespace(ns string) {
+func (k *NSKeeper) addNamespace(ns string) (isNew bool) {
 	if _, ok := k.namespaces[ns]; ok {
-		return
+		return false
 	}
 	if k.namespaces == nil {
 		k.namespaces = make(map[string]struct{})
 	}
 	k.namespaces[ns] = struct{}{}
+	return true
 }
 
 func (k *NSKeeper) DeleteNamespace(ns string) {
@@ -112,6 +121,7 @@ func (k *NSKeeper) FindMatchingMirrors(ns string) []types.NamespacedName {
 }
 
 func (k *NSKeeper) FindMatchingNamespaces(mirror types.NamespacedName) []string {
+	k.waitInit()
 	k.pairsMutex.RLock()
 	defer k.pairsMutex.RUnlock()
 	k.namespacesMutex.RLock()
@@ -137,6 +147,10 @@ func (k *NSKeeper) FindMatchingNamespaces(mirror types.NamespacedName) []string 
 	return result
 }
 
+func (k *NSKeeper) waitInit() {
+	<-k.initChan
+}
+
 func (k *NSKeeper) InitNamespaces(ctx context.Context) {
 	logger := log.FromContext(ctx)
 	k.namespacesMutex.Lock()
@@ -159,6 +173,7 @@ loop:
 				k.addNamespace(ns.Name)
 			}
 			logger.Info(fmt.Sprintf("nskeeper: initialized with %d namespaces", len(k.namespaces)))
+			close(k.initChan)
 			return
 		}
 	}

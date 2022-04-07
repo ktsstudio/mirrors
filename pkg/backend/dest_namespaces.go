@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
+	"github.com/ktsstudio/mirrors/pkg/metrics"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	"github.com/ktsstudio/mirrors/pkg/reconresult"
 	"github.com/panjf2000/ants/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,14 +28,19 @@ type NamespacesDest struct {
 	pool     *ants.Pool
 }
 
-func (d *NamespacesDest) Sync(ctx context.Context, secret *v1.Secret) error {
+func (d *NamespacesDest) Setup(ctx context.Context) error {
+	_ = ctx
 	if err := d.registerNamespaces(); err != nil {
 		return err
 	}
+	return nil
+}
 
+func (d *NamespacesDest) Sync(ctx context.Context, secret *v1.Secret) error {
 	wg := &sync.WaitGroup{}
 	g := &errgroup.Group{}
-	for _, ns := range d.getDestinationNamespaces() {
+	destNamespaces := d.getDestinationNamespaces()
+	for _, ns := range destNamespaces {
 		ns := ns
 		wg.Add(1)
 
@@ -59,6 +66,11 @@ func (d *NamespacesDest) Sync(ctx context.Context, secret *v1.Secret) error {
 			EventReason: "SyncError",
 		}
 	}
+
+	metrics.MirrorNSCurrentCount.With(prometheus.Labels{
+		"mirror":      getPrettyName(d.mirror),
+		"source_type": string(d.mirror.Spec.Source.Type),
+	}).Set(float64(len(destNamespaces)))
 	return nil
 }
 

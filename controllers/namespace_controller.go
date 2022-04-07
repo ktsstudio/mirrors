@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
-	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
+	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,13 +57,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if ns.ObjectMeta.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then lets add the finalizer and update the object. This is equivalent
-		// registering our finalizer.
-		logger.Info(fmt.Sprintf("new namespace: %s", ns.Name))
-		r.nsKeeper.AddNamespace(ns.Name)
-	} else {
+	if !ns.ObjectMeta.DeletionTimestamp.IsZero() {
 		// The object is being deleted
 		logger.Info(fmt.Sprintf("namespace deleted: %s", ns.Name))
 		r.nsKeeper.DeleteNamespace(ns.Name)
@@ -72,12 +66,15 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	mirrors := r.nsKeeper.FindMatchingMirrors(ns.Name)
-	for _, mirror := range mirrors {
-		logger.Info(fmt.Sprintf("triggering mirror reconcile for %s", mirror))
+	if isNew := r.nsKeeper.AddNamespace(ns.Name); isNew {
+		mirrors := r.nsKeeper.FindMatchingMirrors(ns.Name)
+		logger.Info(fmt.Sprintf("new namespace: %s", ns.Name), "matched_mirrors", mirrors)
+		for _, mirror := range mirrors {
+			logger.Info(fmt.Sprintf("triggering mirror reconcile for %s", mirror))
 
-		if err := r.triggerSecretMirrorReconcile(ctx, mirror); err != nil {
-			logger.Error(err, fmt.Sprintf("error triggering mirror reconcile for %s", mirror))
+			if err := r.triggerSecretMirrorReconcile(ctx, mirror); err != nil {
+				logger.Error(err, fmt.Sprintf("error triggering mirror reconcile for %s", mirror))
+			}
 		}
 	}
 
@@ -94,12 +91,12 @@ func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager, nsKeeper *nskee
 }
 
 func (r *NamespaceReconciler) triggerSecretMirrorReconcile(ctx context.Context, name types.NamespacedName) error {
-	var secretMirror mirrorsv1alpha1.SecretMirror
+	var secretMirror mirrorsv1alpha2.SecretMirror
 	if err := r.Get(ctx, name, &secretMirror); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
-	secretMirror.Status.LastSyncTime = metav1.Now()
+	secretMirror.Status.LastSyncTime = metav1.Unix(0, 0)
 	if err := r.Status().Update(ctx, &secretMirror); err != nil {
 		return err
 	}

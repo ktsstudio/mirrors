@@ -3,8 +3,11 @@ package backend
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/vault/api"
 	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
+	"github.com/ktsstudio/mirrors/pkg/metrics"
 	"github.com/ktsstudio/mirrors/pkg/reconresult"
+	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,6 +19,11 @@ type VaultSecretSource struct {
 	record.EventRecorder
 	mirror *mirrorsv1alpha2.SecretMirror
 	vault  VaultBackend
+}
+
+func (s *VaultSecretSource) Setup(ctx context.Context) error {
+	_ = ctx
+	return nil
 }
 
 func (s *VaultSecretSource) Retrieve(ctx context.Context) (*v1.Secret, error) {
@@ -50,8 +58,22 @@ func (s *VaultSecretSource) retrieveVaultSecret(ctx context.Context, vault Vault
 		if err != nil {
 			logger.Info("error while renewing lease - will refetch secret", "err", err, "lease-id", s.mirror.Status.VaultSource.LeaseID)
 			s.mirror.Status.VaultSource = nil
+
+			statusCode := "-"
+			if err, ok := err.(*api.ResponseError); ok {
+				statusCode = fmt.Sprintf("%d", err.StatusCode)
+			}
+			metrics.VaultLeaseRenewErrorCount.With(prometheus.Labels{
+				"mirror":    getPrettyName(s.mirror),
+				"vault":     vault.Addr(),
+				"http_code": statusCode,
+			}).Inc()
 		} else {
 			s.Eventf(s.mirror, v1.EventTypeNormal, "VaultLeaseRenew", "Renewed lease successfully")
+			metrics.VaultLeaseRenewOkCount.With(prometheus.Labels{
+				"mirror": getPrettyName(s.mirror),
+				"vault":  vault.Addr(),
+			}).Inc()
 			logger.Info("successfully renewed vault lease", "leaseId", s.mirror.Status.VaultSource.LeaseID)
 			s.mirror.Status.VaultSource.LeaseID = leaseResult.LeaseID
 			s.mirror.Status.VaultSource.LeaseDuration = leaseResult.LeaseDuration

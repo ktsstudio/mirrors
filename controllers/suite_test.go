@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	mirrorsv1alpha2 "github.com/ktsstudio/mirrors/api/v1alpha2"
 	"path/filepath"
 	"testing"
 
@@ -29,8 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	mirrorsv1alpha1 "github.com/ktsstudio/mirrors/api/v1alpha1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -62,7 +61,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	err = mirrorsv1alpha1.AddToScheme(scheme.Scheme)
+	err = mirrorsv1alpha2.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	//+kubebuilder:scaffold:scheme
