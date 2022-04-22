@@ -18,10 +18,8 @@ package main
 
 import (
 	"flag"
-	"github.com/ktsstudio/mirrors/pkg/vaulter"
 	"os"
 
-	"github.com/ktsstudio/mirrors/pkg/backend"
 	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -86,25 +84,10 @@ func main() {
 
 	nsKeeper := nskeeper.MakeNSKeeper(mgr.GetClient())
 
-	secretMirrorBackend, err := backend.MakeSecretMirrorBackend(
-		mgr.GetClient(),
-		mgr.GetEventRecorderFor("mirrors.kts.studio"),
-		nsKeeper,
-		func(addr string) (backend.VaultBackend, error) {
-			return vaulter.New(addr)
-		},
-	)
-
+	secretMirrorReconciler, err := controllers.SetupMirrorsReconciler(mgr, nsKeeper)
 	if err != nil {
 		setupLog.Error(err, "unable to create secret mirror backend")
 		os.Exit(1)
-	}
-
-	secretMirrorReconciler := &controllers.MirrorReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Backend:  secretMirrorBackend,
-		Recorder: secretMirrorBackend.Recorder,
 	}
 	defer secretMirrorReconciler.Cleanup()
 

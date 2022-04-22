@@ -32,7 +32,7 @@ func authVaultBackend(ctx context.Context, cli client.Client, vault VaultBackend
 			Name:      auth.Token.SecretRef.Name,
 			Namespace: auth.Token.SecretRef.Namespace,
 		}
-		tokenSecret, err := fetchSecret(ctx, cli, tokenSecretName)
+		tokenSecret, err := FetchSecret(ctx, cli, tokenSecretName)
 		if err != nil {
 			return err
 		}
@@ -63,7 +63,7 @@ func authVaultBackend(ctx context.Context, cli client.Client, vault VaultBackend
 			Name:      auth.AppRole.SecretRef.Name,
 			Namespace: auth.AppRole.SecretRef.Namespace,
 		}
-		appRoleSecret, err := fetchSecret(ctx, cli, appRoleSecretName)
+		appRoleSecret, err := FetchSecret(ctx, cli, appRoleSecretName)
 		if err != nil {
 			return err
 		}

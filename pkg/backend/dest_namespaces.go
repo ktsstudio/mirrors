@@ -96,7 +96,7 @@ func (d *NamespacesDest) registerNamespaces() error {
 func (d *NamespacesDest) syncOneToNamespace(ctx context.Context, secret *v1.Secret, dest types.NamespacedName) error {
 	logger := log.FromContext(ctx)
 
-	destSecret, err := fetchSecret(ctx, d, dest)
+	destSecret, err := FetchSecret(ctx, d, dest)
 	if err != nil {
 		return err
 	}
