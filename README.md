@@ -181,7 +181,7 @@ Or using built-in kustomize deployment:
 git clone https://github.com/ktsstudio/mirrors
 cd mirrors
 cd config/default
-kustomize edit set image controller=ktshub/mirrors:0.2.3
+kustomize edit set image controller=ktshub/mirrors:0.2.7
 kustomize build . | kubectl apply -f -
 ```
 
