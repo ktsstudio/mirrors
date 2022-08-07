@@ -60,6 +60,7 @@ func (c *SecretMirrorContext) SetupOrRunFinalizer(ctx context.Context) (bool, er
 		// The object is being deleted
 		if containsString(c.SecretMirror.GetFinalizers(), mirrorsFinalizerName) {
 			// our finalizer is present, so lets handle any external dependency
+			logger.Info("running cleanup")
 			syncer, err := c.makeDestSyncer(ctx)
 			if err != nil {
 				return false, err
@@ -80,6 +81,7 @@ func (c *SecretMirrorContext) SetupOrRunFinalizer(ctx context.Context) (bool, er
 			if err := c.backend.Update(ctx, c.SecretMirror); err != nil {
 				return false, err
 			}
+			logger.Info("removed finalizer")
 		}
 
 		// Stop reconciliation as the item is being deleted

@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"github.com/ktsstudio/mirrors/api/v1alpha2"
 	"github.com/ktsstudio/mirrors/pkg/backend"
+	"github.com/ktsstudio/mirrors/pkg/nskeeper"
 	"github.com/ktsstudio/mirrors/pkg/reconresult"
+	"github.com/ktsstudio/mirrors/pkg/vaulter"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -117,5 +119,27 @@ func (r *MirrorReconciler) handleReconcileResult(ctx context.Context, mirrorCtx 
 
 	return ctrl.Result{
 		RequeueAfter: requeueAfter,
+	}, nil
+}
+
+func SetupMirrorsReconciler(mgr ctrl.Manager, nsKeeper *nskeeper.NSKeeper) (*MirrorReconciler, error) {
+	secretMirrorBackend, err := backend.MakeSecretMirrorBackend(
+		mgr.GetClient(),
+		mgr.GetEventRecorderFor("mirrors.kts.studio"),
+		nsKeeper,
+		func(addr string) (backend.VaultBackend, error) {
+			return vaulter.New(addr)
+		},
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &MirrorReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Backend:  secretMirrorBackend,
+		Recorder: secretMirrorBackend.Recorder,
 	}, nil
 }

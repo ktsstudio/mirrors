@@ -65,7 +65,7 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
-func fetchSecret(ctx context.Context, cli client.Client, name types.NamespacedName) (*v1.Secret, error) {
+func FetchSecret(ctx context.Context, cli client.Client, name types.NamespacedName) (*v1.Secret, error) {
 	var secret v1.Secret
 	if err := cli.Get(ctx, name, &secret); err != nil {
 		return nil, client.IgnoreNotFound(err)
