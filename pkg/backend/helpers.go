@@ -41,12 +41,20 @@ func secretDiffer(src, dest *v1.Secret) bool {
 }
 
 func copySecret(src, dest *v1.Secret) {
+	if src.Labels != nil {
+		dest.Labels = make(map[string]string)
+	}
 	for k, v := range src.Labels {
 		dest.Labels[k] = v
+	}
+
+	if src.Annotations != nil {
+		dest.Annotations = make(map[string]string)
 	}
 	for k, v := range src.Annotations {
 		dest.Annotations[k] = v
 	}
+
 	dest.Data = make(map[string][]byte)
 	for k, v := range src.Data {
 		dataCopy := make([]byte, len(v))
